@@ -10,10 +10,15 @@ Usage:
     # Automatically uses GPU if available
     pca = NipalsPCA(n_components=5)
     pca.fit(X)
+
+    # SIMCA classifier
+    from open_nipals.jax.simca import SIMCA
+    simca = SIMCA(n_components=3)
+    simca.fit(X, y)
 """
 
 from open_nipals.jax.nipalsPCA import NipalsPCA
 from open_nipals.jax.nipalsPLS import NipalsPLS
 from open_nipals.jax.utils import _nan_mult
 
-__all__ = ["NipalsPCA", "NipalsPLS", "_nan_mult"]
+__all__ = ["NipalsPCA", "NipalsPLS", "_nan_mult", "simca"]
