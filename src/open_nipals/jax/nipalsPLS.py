@@ -421,18 +421,27 @@ class NipalsPLS(_PLS):
         n, _ = input_jax.shape
         num_lvs = self.n_components
 
+        nan_mask = jnp.isnan(input_jax)
+        nan_flag = bool(jnp.any(nan_mask))
+
+        # For Y-scores (no weights provided), use loadings which are unit
+        # normalized, so use_denom=True (divides by 1).
+        # For X-scores (weights provided), behavior depends on NaN presence:
+        # - Non-NaN data: use_denom=False (weights are scaled by p_weight during fit)
+        # - NaN data: use_denom=True (fitting uses this with scaled weights)
         if weights is None:
             weights_jax = loadings_jax.copy()
+            use_denom = True  # Y-loadings are unit normalized
         else:
             weights_jax = jnp.array(weights)
+            use_denom = nan_flag  # True for NaN, False for non-NaN
 
         scores = jnp.zeros((n, num_lvs))
-        nan_mask = jnp.isnan(input_jax)
         resids = input_jax.copy()
 
         for ind_lv in range(num_lvs):
             score_col = _nan_mult(
-                resids, weights_jax[:, [ind_lv]], nan_mask, use_denom=True
+                resids, weights_jax[:, [ind_lv]], nan_mask, use_denom=use_denom
             )
             scores = scores.at[:, [ind_lv]].set(score_col)
             resids = resids - score_col @ loadings_jax[:, [ind_lv]].T
@@ -650,21 +659,36 @@ class NipalsPLS(_PLS):
     def get_reg_vector(self) -> np.ndarray:
         """Get the regression vector for the model.
 
+        The regression vector B satisfies: y_pred = X @ B
+        This matches the prediction from predict(X).
+
+        For PLS, the coefficient matrix is:
+        B = W @ (P.T @ W)^-1 @ diag(b) @ Q.T
+
+        where W = weights, P = X loadings, Q = Y loadings,
+        and b = regression coefficients (diagonal of regression_matrix).
+
         Raises:
             NotFittedError: If model not fit.
 
         Returns:
-            np.ndarray: The regression vector.
+            np.ndarray: The regression vector (n_features_x, n_targets_y).
         """
         if not self.__sklearn_is_fitted__():
             raise NotFittedError("Model has not yet been fit")
 
-        # Use JAX
-        weights_jax = jnp.array(self.weights_x[:, : self.n_components])
-        reg_jax = jnp.array(self.regression_matrix[: self.n_components, :])
-        loadings_y_jax = jnp.array(self.loadings_y[:, : self.n_components])
+        num_lvs = self.n_components
+        W = jnp.array(self.weights_x[:, :num_lvs])
+        P = jnp.array(self.loadings_x[:, :num_lvs])
+        Q = jnp.array(self.loadings_y[:, :num_lvs])
+        B_inner = jnp.array(self.regression_matrix[:num_lvs, :num_lvs])
 
-        reg_vects = weights_jax @ (reg_jax @ loadings_y_jax.T)
+        # Compute (P.T @ W)^-1 correction for deflation
+        PTW_inv = jnp.linalg.inv(P.T @ W)
+
+        # B = W @ (P.T @ W)^-1 @ B_inner @ Q.T
+        reg_vects = W @ PTW_inv @ B_inner @ Q.T
+
         return np.array(reg_vects)
 
     def __sklearn_is_fitted__(self) -> bool:

@@ -488,20 +488,31 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
         # Extract variables for simplicity
         num_lvs = self.n_components
+
+        nan_mask = np.isnan(input_array)
+        nan_flag = np.any(nan_mask)
+
+        # For Y-scores (no weights provided), use loadings which are unit
+        # normalized, so use_denom=True (divides by 1).
+        # For X-scores (weights provided), behavior depends on NaN presence:
+        # - Non-NaN data: use_denom=False (weights are scaled by p_weight during fit)
+        # - NaN data: use_denom=True (fitting uses this with scaled weights)
         if weights is None:
-            # if no weights are provided, use loadings
             weights = loadings.copy()
+            use_denom = True  # Y-loadings are unit normalized
+        else:
+            # X-weights: match the fitting behavior
+            use_denom = nan_flag  # True for NaN, False for non-NaN
 
         scores = np.zeros((n, num_lvs))
 
-        nan_mask = np.isnan(input_array)
         resids = input_array.copy()
         # Looping over every loading
         # uses approach described in section 3.1 of McGregor paper
         # (Single component projection algorithm for missing data in PCA/PLS)
         for ind_lv in range(num_lvs):
             scores[:, [ind_lv]] = _nan_mult(
-                resids, weights[:, [ind_lv]], nan_mask
+                resids, weights[:, [ind_lv]], nan_mask, use_denom=use_denom
             )
             # deflate input data
             resids = resids - scores[:, [ind_lv]] @ loadings[:, [ind_lv]].T
@@ -833,11 +844,20 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
     def get_reg_vector(self) -> np.array:
         """Give the user the regression vector for the model.
 
+        The regression vector B satisfies: y_pred = X @ B
+        This matches the prediction from predict(X).
+
+        For PLS, the coefficient matrix is:
+        B = W @ (P.T @ W)^-1 @ diag(b) @ Q.T
+
+        where W = weights, P = X loadings, Q = Y loadings,
+        and b = regression coefficients (diagonal of regression_matrix).
+
         Raises:
             NotFittedError: If the model has not been fit.
 
         Returns:
-            np.array: The regression vector.
+            np.array: The regression vector (n_features_x, n_targets_y).
         """
 
         # Check whether the model is available or not
@@ -845,10 +865,16 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             raise NotFittedError("Model has not yet been fit")
 
         num_lvs = self.n_components
-        reg_vects = self.weights_x[:, :num_lvs] @ (
-            self.regression_matrix[:num_lvs, :num_lvs]
-            @ self.loadings_y[:, :num_lvs].T
-        )
+        W = self.weights_x[:, :num_lvs]
+        P = self.loadings_x[:, :num_lvs]
+        Q = self.loadings_y[:, :num_lvs]
+        B_inner = self.regression_matrix[:num_lvs, :num_lvs]
+
+        # Compute (P.T @ W)^-1 correction for deflation
+        PTW_inv = np.linalg.inv(P.T @ W)
+
+        # B = W @ (P.T @ W)^-1 @ B_inner @ Q.T
+        reg_vects = W @ PTW_inv @ B_inner @ Q.T
 
         return reg_vects
 
