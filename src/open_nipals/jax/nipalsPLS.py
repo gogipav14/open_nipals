@@ -30,14 +30,15 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
-from sklearn.cross_decomposition._pls import _PLS
+from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
 from sklearn.exceptions import NotFittedError
+from sklearn.covariance import LedoitWolf
 import warnings
 from open_nipals.jax.utils import _nan_mult
 from typing import Optional, Tuple, Union
 
 
-class NipalsPLS(_PLS):
+class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
     """JAX-accelerated PLS using the NIPALS algorithm.
 
     This class provides the same interface as the NumPy version but uses

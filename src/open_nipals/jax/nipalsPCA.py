@@ -24,8 +24,9 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
-from sklearn.decomposition._base import _BasePCA
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.exceptions import NotFittedError
+from sklearn.covariance import LedoitWolf
 import warnings
 from scipy.stats import f as F_dist
 from open_nipals.jax.utils import _nan_mult
@@ -33,7 +34,7 @@ from typing import Optional
 from functools import partial
 
 
-class NipalsPCA(_BasePCA):
+class NipalsPCA(BaseEstimator, TransformerMixin):
     """JAX-accelerated PCA using the NIPALS algorithm.
 
     This class provides the same interface as the NumPy version but uses
