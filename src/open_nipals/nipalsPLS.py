@@ -538,7 +538,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             try:
                 maxmean = np.nanmax(np.abs(np.nanmean(data, axis=0)))
             except RuntimeWarning:
-                maxmean = np.NaN
+                maxmean = np.nan
 
             # Return boolean
             return maxmean < 1e-10
@@ -795,7 +795,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
             K = self.fit_data_x.shape[1]
             factor = np.sqrt(n / ((n - num_lvs - A0) * (K - num_lvs)))
-            out_oomd = factor.reshape(-1, 1) * np.sqrt(out_oomd)
+            out_oomd = factor * np.sqrt(out_oomd)
 
         else:
             raise NotImplementedError("Input metric not recognized. See doc.")

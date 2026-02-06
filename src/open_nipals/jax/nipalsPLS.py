@@ -62,7 +62,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         self,
         n_components: int = 2,
         max_iter: int = 10000,
-        tol_criteria: float = 10**-10,
+        tol_criteria: float = 1e-6,
         mean_centered: bool = True,
         force_include: bool = False,
     ):
@@ -458,7 +458,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             except RuntimeWarning:
                 maxmean = np.nan
 
-            return maxmean < 10**-10
+            return maxmean < 1e-10
 
     def fit_transform(
         self, X: np.ndarray, y: np.ndarray
@@ -486,6 +486,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         input_scores: Optional[np.ndarray] = None,
         input_array: Optional[np.ndarray] = None,
         metric: str = "HotellingT2",
+        covariance: str = "diag",
     ):
         """Calculate in-model distance (Hotelling's T2).
 
@@ -493,6 +494,8 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             input_scores (Optional[np.ndarray]): Scores array.
             input_array (Optional[np.ndarray]): Data array.
             metric (str): Metric to compute. Defaults to 'HotellingT2'.
+            covariance (str): Method to compute covariance. Valid options are
+                {'diag', 'full', 'ledoit_wolf'}. Defaults to 'diag'.
 
         Raises:
             NotFittedError: If model not fit.
@@ -531,10 +534,31 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             fit_scores_jax = jnp.array(self.fit_scores_x[:, :num_lvs_fit])
 
             fit_means = jnp.mean(fit_scores_jax, axis=0)
-            fit_vars = jnp.var(fit_scores_jax, axis=0, ddof=1)
-            out_imd = jnp.sum(
-                (scores_jax - fit_means) ** 2 / fit_vars, axis=1
-            ).reshape(-1, 1)
+
+            if covariance == "diag":
+                fit_vars = jnp.var(fit_scores_jax, axis=0, ddof=1)
+                out_imd = jnp.sum(
+                    (scores_jax - fit_means) ** 2 / fit_vars, axis=1
+                ).reshape(-1, 1)
+            elif covariance == "full":
+                # Use full covariance matrix
+                cov_matrix = jnp.cov(fit_scores_jax.T, ddof=1)
+                cov_inv = jnp.linalg.pinv(cov_matrix)
+                diff = scores_jax - fit_means
+                out_imd = jnp.diagonal(diff @ cov_inv @ diff.T).reshape(-1, 1)
+            elif covariance == "ledoit_wolf":
+                # Compute full covariance matrix with Ledoit-Wolf shrinkage
+                lw_obj = LedoitWolf(
+                    assume_centered=self.mean_centered
+                ).fit(np.array(fit_scores_jax))
+                cov_inv = jnp.linalg.pinv(jnp.array(lw_obj.covariance_))
+                diff = scores_jax - fit_means
+                out_imd = jnp.diagonal(diff @ cov_inv @ diff.T).reshape(-1, 1)
+            else:
+                raise NotImplementedError(
+                    f"Covariance method {covariance} not implemented. "
+                    "Possible methods are {'diag', 'full', 'ledoit_wolf'}."
+                )
 
             return np.array(out_imd)
         else:
@@ -617,7 +641,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
             K = self.fit_data_x.shape[1]
             factor = np.sqrt(n / ((n - num_lvs - A0) * (K - num_lvs)))
-            out_oomd = factor.reshape(-1, 1) * np.sqrt(out_oomd)
+            out_oomd = factor * np.sqrt(out_oomd)
         else:
             raise ValueError("Input metric not recognized")
 
@@ -691,6 +715,75 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         reg_vects = W @ PTW_inv @ B_inner @ Q.T
 
         return np.array(reg_vects)
+
+    def get_explained_variance_ratio(
+        self,
+        in_x_data: np.ndarray = None,
+        in_y_data: np.ndarray = None,
+    ) -> (np.ndarray, np.ndarray):
+        """Calculate the explained variance ratios for X and y arrays
+        per fitted component.
+
+        Args:
+            in_x_data (np.ndarray, optional):
+                Alternative input X data. Defaults to None.
+            in_y_data (np.ndarray, optional):
+                Alternative input y data. Defaults to None.
+
+        Raises:
+            ValueError: If in_x_data not mean centered.
+            ValueError: If in_y_data not mean centered.
+
+        Returns:
+            (np.ndarray, np.ndarray): explained variance ratios for X and y
+        """
+        if in_x_data is not None:
+            if self._check_mean_centered(in_x_data):
+                x_data = in_x_data
+            else:
+                raise ValueError("Variance input X data is not mean centered.")
+        else:
+            x_data = self.fit_data_x
+
+        if in_y_data is not None:
+            if self._check_mean_centered(in_y_data):
+                y_data = in_y_data
+            else:
+                raise ValueError("Variance input y data is not mean centered.")
+        else:
+            y_data = self.fit_data_y
+
+        orig_n_comp = self.n_components
+        ret_x = np.zeros(orig_n_comp + 1)
+        ret_y = np.zeros(orig_n_comp + 1)
+
+        # compute explained variance ratios per component
+        for i in range(1, orig_n_comp + 1):
+            self.set_components(i)
+
+            # compute data as per model
+            sim_data_x = self.inverse_transform(self.transform(x_data))
+            sim_data_y = self.predict(x_data, self.fit_scores_x)
+
+            # compute residual variance
+            resid_x_var = np.nanvar(x_data - sim_data_x, axis=0)
+            resid_y_var = np.nanvar(y_data - sim_data_y, axis=0)
+
+            # variance of data scaled to 1, average over variables
+            ret_x[i] = np.nanmean(1 - resid_x_var)
+            ret_y[i] = np.nanmean(1 - resid_y_var)
+
+        # go back to original components
+        self.set_components(orig_n_comp)
+
+        # subtract previous components
+        ret_x = ret_x[1:] - ret_x[:-1]
+        ret_y = ret_y[1:] - ret_y[:-1]
+
+        return ret_x, ret_y
+
+    # Property alias for sklearn compatibility
+    explained_variance_ratio_ = property(get_explained_variance_ratio)
 
     def __sklearn_is_fitted__(self) -> bool:
         """Determine if this is fitted or not."""

@@ -31,7 +31,6 @@ import warnings
 from scipy.stats import f as F_dist
 from open_nipals.jax.utils import _nan_mult
 from typing import Optional
-from functools import partial
 
 
 class NipalsPCA(BaseEstimator, TransformerMixin):
@@ -64,7 +63,7 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
         self,
         n_components: int = 2,
         max_iter: int = 10000,
-        tol_criteria: float = 10**-8,
+        tol_criteria: float = 1e-6,
         mean_centered: bool = True,
     ):
         """The constructor for the NipalsPCA class.
@@ -261,12 +260,12 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
         Args:
             X (np.ndarray): The nxm input array to be projected.
             method (str, optional): The method to use for projection.
-                Valid options are {'naive','projection','conditionalMean'}
+                Valid options are {'naive','projection','conditional_mean'}
                 Defaults to 'naive'.
 
         Raises:
             NotFittedError: If model has not been fit yet.
-            ValueError: Method 'conditionalMean' requires fit_data.
+            ValueError: Method 'conditional_mean' requires fit_data.
 
         Returns:
             np.ndarray: The corresponding scores.
@@ -326,7 +325,7 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
             return scores_np
 
-        elif nan_flag and (method == "conditionalMean"):
+        elif nan_flag and (method == "conditional_mean"):
             # Conditional mean replacement method
             if self.fit_data is None:
                 raise ValueError(
@@ -379,6 +378,13 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
             raise ValueError(
                 "Model Object has already been fit. "
                 "Try set_components() or build a new model object."
+            )
+
+        # Check to see if the data is mean_centered; if not raise a warning
+        if (not self._check_mean_centered(X)) and (self.mean_centered):
+            warnings.warn(
+                "Data appears to not be mean centered. "
+                "This may cause errors in interpretation!"
             )
 
         self.fit_data = np.copy(X)
@@ -442,6 +448,7 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
         input_scores: Optional[np.ndarray] = None,
         input_array: Optional[np.ndarray] = None,
         metric: str = "HotellingT2",
+        covariance: str = "diag",
     ) -> np.ndarray:
         """Calculate within-model distance (Hotelling's T2).
 
@@ -452,11 +459,14 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                 Defaults to None.
             metric (str, optional): The metric to use.
                 Valid options are {'HotellingT2'}. Defaults to 'HotellingT2'.
+            covariance (str, optional): Method to compute covariance. Valid
+                options are {'diag', 'full', 'ledoit_wolf'}.
+                Defaults to 'diag'.
 
         Raises:
             NotFittedError: Model has not been fit yet.
             ValueError: Neither scores nor input data provided.
-            NotImplementedError: Unknown metric.
+            NotImplementedError: Unknown metric or covariance method.
 
         Returns:
             np.ndarray: The calculated within-model distance.
@@ -474,11 +484,11 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                 warnings.warn(
                     "Both Scores and Data are given. Operating on Data alone."
                 )
-                out_t2 = self.calc_imd(input_array=input_array)
+                out_t2 = self.calc_imd(input_array=input_array, covariance=covariance)
 
             elif (input_scores is None) and (input_array is not None):
                 scores = self.transform(input_array)
-                out_t2 = self.calc_imd(input_scores=scores)
+                out_t2 = self.calc_imd(input_scores=scores, covariance=covariance)
 
             else:
                 # Use JAX for vectorized computation
@@ -495,10 +505,31 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                     )
 
                 fit_means = jnp.mean(fit_scores_jax, axis=0)
-                fit_vars = jnp.var(fit_scores_jax, axis=0, ddof=1)
-                out_t2 = jnp.sum(
-                    (scores_jax - fit_means) ** 2 / fit_vars, axis=1
-                ).reshape(-1, 1)
+
+                if covariance == "diag":
+                    fit_vars = jnp.var(fit_scores_jax, axis=0, ddof=1)
+                    out_t2 = jnp.sum(
+                        (scores_jax - fit_means) ** 2 / fit_vars, axis=1
+                    ).reshape(-1, 1)
+                elif covariance == "full":
+                    # Use full covariance matrix
+                    cov_matrix = jnp.cov(fit_scores_jax.T, ddof=1)
+                    cov_inv = jnp.linalg.pinv(cov_matrix)
+                    diff = scores_jax - fit_means
+                    out_t2 = jnp.diagonal(diff @ cov_inv @ diff.T).reshape(-1, 1)
+                elif covariance == "ledoit_wolf":
+                    # Compute full covariance matrix with Ledoit-Wolf shrinkage
+                    lw_obj = LedoitWolf(
+                        assume_centered=self.mean_centered
+                    ).fit(np.array(fit_scores_jax))
+                    cov_inv = jnp.linalg.pinv(jnp.array(lw_obj.covariance_))
+                    diff = scores_jax - fit_means
+                    out_t2 = jnp.diagonal(diff @ cov_inv @ diff.T).reshape(-1, 1)
+                else:
+                    raise NotImplementedError(
+                        f"Covariance method {covariance} not implemented. "
+                        "Possible methods are {'diag', 'full', 'ledoit_wolf'}."
+                    )
                 out_t2 = np.array(out_t2)
         else:
             raise NotImplementedError("This metric has not been implemented. See doc.")
@@ -623,6 +654,75 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
             d_crit = np.sqrt(F_dist.ppf(alpha, dof_obs, dof_mod))
             return d_crit
+
+    def _check_mean_centered(self, data: np.ndarray) -> bool:
+        """Check if data is mean centered along the rows within tolerance.
+
+        Args:
+            data (np.ndarray): Data to check.
+
+        Returns:
+            bool: Whether or not the data is mean-centered.
+        """
+        with warnings.catch_warnings():
+            warnings.filterwarnings(action="ignore", message="Mean of empty slice")
+            try:
+                maxmean = np.nanmax(np.abs(np.nanmean(data, axis=0)))
+            except RuntimeWarning:
+                maxmean = np.nan
+
+            return maxmean < 1e-10
+
+    def get_explained_variance_ratio(
+        self,
+        in_data: np.ndarray = None,
+    ) -> np.ndarray:
+        """Calculate the explained variance ratios per fitted component.
+
+        Args:
+            in_data (np.ndarray, optional):
+                Alternative input data. Defaults to None.
+
+        Raises:
+            ValueError: if in_data not mean centered.
+
+        Returns:
+            np.ndarray: explained variances
+        """
+        if in_data is not None:
+            if self._check_mean_centered(in_data):
+                data = in_data
+            else:
+                raise ValueError("Variance input data is not mean centered.")
+        else:
+            data = self.fit_data
+
+        orig_n_comp = self.n_components
+        ret = np.zeros(orig_n_comp + 1)
+
+        # compute explained variances per component
+        for i in range(1, orig_n_comp + 1):
+            self.set_components(i)
+
+            # compute data as per model
+            sim_data = self.inverse_transform(self.transform(data))
+
+            # compute residual variance
+            resid_var = np.nanvar(data - sim_data, axis=0)
+
+            # variance of data scaled to 1, average over variables
+            ret[i] = np.nanmean(1 - resid_var)
+
+        # go back to original components
+        self.set_components(orig_n_comp)
+
+        # subtract previous component
+        ret = ret[1:] - ret[:-1]
+
+        return ret
+
+    # Property alias for sklearn compatibility
+    explained_variance_ratio_ = property(get_explained_variance_ratio)
 
     def __sklearn_is_fitted__(self) -> bool:
         """Determine if this is fitted or not."""
