@@ -636,3 +636,56 @@ def test_explained_variance_ratio(get_data, request):
 
     assert np.all(diffs_x < 0), "Explained X variance ratio must be decreasing"
     assert np.all(diffs_y < 0), "Explained y variance ratio must be decreasing"
+
+
+def test_set_component_shrink_then_grow():
+    """Components added after shrinking must not repeat fitted ones"""
+    rng = np.random.default_rng(0)
+    data_x = rng.normal(size=(60, 5)) @ rng.normal(size=(5, 5))
+    data_x = data_x - data_x.mean(axis=0)
+    data_y = data_x[:, :2] + 0.1 * rng.normal(size=(60, 2))
+    data_y = data_y - data_y.mean(axis=0)
+
+    model_ref = NipalsPLS(n_components=5).fit(data_x, data_y)
+    model = NipalsPLS(n_components=4).fit(data_x, data_y)
+    model.set_components(2)
+    model.set_components(5)
+
+    assert np.allclose(model.loadings_x, model_ref.loadings_x, atol=1e-6), (
+        "Loadings after shrinking and growing differ from a direct fit"
+    )
+    assert np.allclose(
+        model.predict(data_x), model_ref.predict(data_x), atol=1e-6
+    ), "Predictions after shrinking and growing differ from a direct fit"
+
+
+def test_all_nan_y_row_is_dropped():
+    """A row without any Y data is dropped instead of crashing the fit"""
+    rng = np.random.default_rng(0)
+    data_x = rng.normal(size=(50, 6))
+    data_x = data_x - data_x.mean(axis=0)
+    data_y = data_x[:, :2].copy()
+    data_y[5, :] = np.nan
+    data_y = data_y - np.nanmean(data_y, axis=0)
+
+    with pytest.warns(UserWarning, match="dropped"):
+        model = NipalsPLS(n_components=2).fit(data_x, data_y)
+
+    assert model.fit_scores_x.shape == (49, 2)
+    assert np.all(np.isfinite(model.predict(data_x)))
+
+
+def test_reg_vector_matches_predict():
+    """X @ get_reg_vector() must reproduce predict(X)"""
+    rng = np.random.default_rng(0)
+    data_x = rng.normal(size=(60, 8))
+    data_x = data_x - data_x.mean(axis=0)
+    data_y = data_x[:, :3] @ rng.normal(size=(3, 2))
+    data_y = data_y + 0.1 * rng.normal(size=(60, 2))
+    data_y = data_y - data_y.mean(axis=0)
+
+    model = NipalsPLS(n_components=3).fit(data_x, data_y)
+
+    assert np.allclose(
+        data_x @ model.get_reg_vector(), model.predict(data_x), atol=1e-10
+    ), "Regression vector does not reproduce the predictions"
