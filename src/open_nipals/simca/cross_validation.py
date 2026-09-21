@@ -160,6 +160,126 @@ class VenetianBlindsCV:
         return self.n_splits
 
 
+def _element_groups(n_rows: int, n_cols: int, n_groups: int) -> np.ndarray:
+    """
+    Assign every element of a matrix to one of n_groups groups.
+
+    A diagonal (venetian blind) pattern is used, so every group touches
+    every row and every column roughly evenly.
+
+    Parameters
+    ----------
+    n_rows : int
+        Number of rows.
+    n_cols : int
+        Number of columns.
+    n_groups : int
+        Number of element groups.
+
+    Returns
+    -------
+    np.ndarray
+        Integer group index for each element, shape (n_rows, n_cols).
+    """
+    rows = np.arange(n_rows).reshape(-1, 1)
+    cols = np.arange(n_cols).reshape(1, -1)
+    return (rows + cols) % n_groups
+
+
+def cross_val_press_pca(
+    model_class,
+    X: np.ndarray,
+    n_components: int,
+    cv,
+    n_element_groups: int = 7,
+    **model_kwargs
+) -> Tuple[float, float]:
+    """
+    Element-wise (Wold) cross-validated PRESS for a PCA model.
+
+    For every fold the model is fitted on the training rows only, with
+    the mean re-estimated on those rows. The elements of the validation
+    rows are then split into ``n_element_groups`` groups; one group at a
+    time is set to NaN, the scores of the validation rows are computed
+    from the *remaining* elements with
+    ``transform(method='projection')`` and the held-out elements are
+    reconstructed with ``inverse_transform``. PRESS is accumulated only
+    over the held-out elements, so no element ever contributes to its
+    own prediction.
+
+    Parameters
+    ----------
+    model_class : class
+        PCA model class (e.g., NipalsPCA).
+    X : np.ndarray
+        Data matrix (n_samples, n_features).
+    n_components : int
+        Number of components.
+    cv : CrossValidator
+        Cross-validation object with split() method.
+    n_element_groups : int, default=7
+        Number of element groups per fold. Clipped to [2, n_features].
+    **model_kwargs
+        Additional arguments for model constructor.
+
+    Returns
+    -------
+    press : float
+        Sum of squared prediction errors over all held-out elements.
+    ss_total : float
+        Sum of squares of the same elements, after the within-fold
+        centring, i.e. the reference for Q² = 1 - press / ss_total.
+
+    Raises
+    ------
+    ValueError
+        If a training fold has too few rows for n_components.
+    """
+    X = np.asarray(X, dtype=float)
+    n_groups = int(max(2, min(n_element_groups, X.shape[1])))
+
+    press = 0.0
+    ss_total = 0.0
+
+    for train_idx, test_idx in cv.split(X):
+        if len(test_idx) == 0:
+            continue
+        if len(train_idx) <= n_components + 1:
+            raise ValueError(
+                f"A cross-validation fold has {len(train_idx)} training "
+                f"rows, which is too few for {n_components} components. "
+                "Use fewer folds, fewer components or more samples."
+            )
+
+        # Preprocessing is fitted on the training part of the fold only
+        X_train = X[train_idx]
+        mean = np.nanmean(X_train, axis=0)
+        X_train = X_train - mean
+        X_val = X[test_idx] - mean
+
+        model = model_class(n_components=n_components, **model_kwargs)
+        model.fit(X_train)
+
+        observed = ~np.isnan(X_val)
+        groups = _element_groups(*X_val.shape, n_groups)
+        ss_total += float(np.sum(np.where(observed, X_val, 0.0) ** 2))
+
+        for group in range(n_groups):
+            held_out = (groups == group) & observed
+            if not np.any(held_out):
+                continue
+
+            X_masked = np.where(held_out, np.nan, X_val)
+            scores = np.asarray(
+                model.transform(X_masked, method="projection")
+            )
+            recon = np.asarray(model.inverse_transform(scores))
+            resid = X_val[held_out] - recon[held_out]
+            press += float(np.sum(resid ** 2))
+
+    return press, ss_total
+
+
 def cross_val_predict_pca(
     model_class,
     X: np.ndarray,
@@ -169,6 +289,11 @@ def cross_val_predict_pca(
 ) -> np.ndarray:
     """
     Generate cross-validated PCA reconstructions.
+
+    Every validation row is reconstructed from its own scores, so the
+    row informs its own reconstruction. That makes this function useful
+    for inspecting reconstructions, but *not* for Q²: use
+    :func:`cross_val_press_pca` for that.
 
     Parameters
     ----------
@@ -200,8 +325,8 @@ def cross_val_predict_pca(
         model.fit(X_train)
 
         # Transform and inverse transform test data
-        scores = model.transform(X_test)
-        X_reconstructed = model.inverse_transform(scores)
+        scores = np.asarray(model.transform(X_test))
+        X_reconstructed = np.asarray(model.inverse_transform(scores))
 
         X_pred[test_idx] = X_reconstructed
 

@@ -2,6 +2,8 @@
 Tests for SIMCA classifier implementation.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -12,6 +14,7 @@ from open_nipals.simca import (
     KFoldCV,
     LeaveOneOutCV,
     VenetianBlindsCV,
+    dmodx_limit,
 )
 from open_nipals.nipalsPCA import NipalsPCA
 
@@ -82,6 +85,23 @@ def five_class_data():
 
     X = np.vstack(X_all)
     y = np.concatenate(y_all)
+
+    return X, y
+
+
+@pytest.fixture
+def centred_two_class_data():
+    """Two separated classes, centred on the pooled mean."""
+    rng = np.random.default_rng(0)
+    n_per_class = 60
+    n_features = 6
+
+    X0 = rng.standard_normal((n_per_class, n_features))
+    X1 = rng.standard_normal((n_per_class, n_features)) + 5.0
+
+    X = np.vstack([X0, X1])
+    X = X - X.mean(axis=0)
+    y = np.array([0] * n_per_class + [1] * n_per_class)
 
     return X, y
 
@@ -379,6 +399,299 @@ class TestSIMCAStringLabels:
 
         y_pred = model.predict(X)
         assert all(p in ["class_a", "class_b", None] for p in y_pred)
+
+
+class TestSIMCAPreprocessingOnce:
+    """Finding 1: preprocessing must be applied exactly once."""
+
+    def test_predict_agrees_with_membership(self, two_class_data):
+        """A sample inside exactly one class is predicted as that class."""
+        X, y = two_class_data
+        model = SIMCA(n_components=2, scale=True).fit(X, y)
+
+        membership = model.get_class_membership(X)
+        y_pred = model.predict(X)
+
+        single = 0
+        for i, members in enumerate(membership["member_of"]):
+            if len(members) == 1:
+                single += 1
+                assert y_pred[i] == members[0]
+
+        assert single > 0, "fixture no longer exercises single membership"
+
+    def test_reject_predictions_match_membership(self, two_class_data):
+        """With rejection there is no fallback to hide a second scaling."""
+        X, y = two_class_data
+        model = SIMCA(
+            n_components=2, scale=True, unknown_handling="reject"
+        ).fit(X, y)
+
+        membership = model.get_class_membership(X)
+        y_pred = model.predict(X)
+
+        members = 0
+        for i, classes in enumerate(membership["member_of"]):
+            if len(classes) == 0:
+                assert y_pred[i] is None
+            elif len(classes) == 1:
+                members += 1
+                assert y_pred[i] == classes[0]
+
+        assert members > 0, "fixture no longer exercises membership"
+
+    def test_scaler_is_applied_once_per_call(self, two_class_data):
+        """predict() must not push the data through the scaler twice."""
+        X, y = two_class_data
+        model = SIMCA(n_components=2, scale=True).fit(X, y)
+
+        original = model.scaler_.transform
+        calls = []
+
+        def counting_transform(data):
+            calls.append(data)
+            return original(data)
+
+        model.scaler_.transform = counting_transform
+        model.predict(X)
+
+        assert len(calls) == 1
+
+    def test_predict_matches_externally_scaled_model(self, two_class_data):
+        """Scaling inside the model must match scaling by hand."""
+        X, y = two_class_data
+
+        inside = SIMCA(n_components=2, scale=True).fit(X, y)
+        X_scaled = inside.scaler_.transform(X)
+        outside = SIMCA(n_components=2, scale=False).fit(X_scaled, y)
+
+        np.testing.assert_allclose(
+            inside.get_distances(X)["dmodx"],
+            outside.get_distances(X_scaled)["dmodx"],
+            rtol=1e-8,
+        )
+        assert list(inside.predict(X)) == list(outside.predict(X_scaled))
+
+    def test_membership_matches_distances(self, two_class_data):
+        """Membership must be reproducible from the reported distances."""
+        X, y = two_class_data
+        model = SIMCA(n_components=2, scale=True).fit(X, y)
+
+        membership = model.get_class_membership(X)
+        distances = model.get_distances(X)
+
+        for i in range(X.shape[0]):
+            within = [
+                label
+                for j, label in enumerate(model.classes_)
+                if distances["t2"][i, j] <= distances["t2_limits"][j]
+                and distances["dmodx"][i, j] <= distances["dmodx_limits"][j]
+            ]
+            assert membership["member_of"][i] == within
+
+
+class TestSIMCAClassCentering:
+    """Finding 2: class models must be centred within their class."""
+
+    def test_class_mean_is_stored_and_removed(self, two_class_data):
+        """Each PCA model sees data centred on its own class mean."""
+        X, y = two_class_data
+        model = SIMCA(n_components=2, scale=True).fit(X, y)
+        X_scaled = model.scaler_.transform(X)
+
+        for label, class_model in model.class_models_.items():
+            expected = X_scaled[y == label].mean(axis=0)
+            np.testing.assert_allclose(
+                class_model.class_mean, expected, atol=1e-12
+            )
+
+            fit_data = np.asarray(class_model.pca_model.fit_data)
+            assert np.abs(fit_data.mean(axis=0)).max() < 1e-10
+
+    def test_r2_describes_within_class_variation(self, two_class_data):
+        """R² must not be inflated by the offset between classes."""
+        X, y = two_class_data
+        model = SIMCA(n_components=3, scale=True).fit(X, y)
+
+        for class_model in model.class_models_.values():
+            r2 = class_model.r2_cumulative
+            # The classes are spherical, so no single component can
+            # explain most of the within-class variation
+            assert r2[0] < 0.5
+            assert np.all(np.diff(r2) >= -1e-10)
+            assert np.all(r2 <= 1.0 + 1e-10)
+
+    def test_distances_use_the_class_mean(self, centred_two_class_data):
+        """The class mean itself sits at the centre of its own model."""
+        X, y = centred_two_class_data
+        model = SIMCA(n_components=2, scale=False).fit(X, y)
+
+        for i, label in enumerate(model.classes_):
+            class_model = model.class_models_[label]
+            mean_row = class_model.class_mean.reshape(1, -1)
+            distances = model.get_distances(mean_row)
+            assert distances["t2"][0, i] == pytest.approx(0.0, abs=1e-8)
+            assert distances["dmodx"][0, i] == pytest.approx(0.0, abs=1e-8)
+
+
+class TestSIMCADModXNormalisation:
+    """Finding 3: DModX and its limit must live on the same scale."""
+
+    def test_acceptance_is_scale_invariant(self, centred_two_class_data):
+        """Multiplying centred data by 10 changes nothing."""
+        X, y = centred_two_class_data
+
+        base = SIMCA(n_components=2, scale=False).fit(X, y)
+        scaled = SIMCA(n_components=2, scale=False).fit(X * 10.0, y)
+
+        d_base = base.get_distances(X)
+        d_scaled = scaled.get_distances(X * 10.0)
+
+        np.testing.assert_allclose(
+            d_base["dmodx"], d_scaled["dmodx"], rtol=1e-8
+        )
+        np.testing.assert_allclose(
+            d_base["dmodx_limits"], d_scaled["dmodx_limits"], rtol=1e-12
+        )
+
+        accept_base = d_base["dmodx"] <= d_base["dmodx_limits"]
+        accept_scaled = d_scaled["dmodx"] <= d_scaled["dmodx_limits"]
+        np.testing.assert_array_equal(accept_base, accept_scaled)
+
+    def test_own_class_acceptance_near_alpha(self, centred_two_class_data):
+        """Most training samples stay inside their own DModX limit."""
+        X, y = centred_two_class_data
+        model = SIMCA(n_components=2, scale=False, alpha=0.95).fit(X, y)
+        distances = model.get_distances(X)
+
+        for i, label in enumerate(model.classes_):
+            own = distances["dmodx"][y == label, i]
+            rate = np.mean(own <= distances["dmodx_limits"][i])
+            assert 0.85 <= rate <= 1.0
+
+    def test_normalised_dmodx_is_about_one(self, centred_two_class_data):
+        """s0 normalises the training DModX to roughly unity."""
+        X, y = centred_two_class_data
+        model = SIMCA(n_components=2, scale=False).fit(X, y)
+        distances = model.get_distances(X)
+
+        for i, label in enumerate(model.classes_):
+            own = distances["dmodx"][y == label, i]
+            assert 0.8 < np.mean(own) < 1.2
+
+    def test_limit_matches_f_distribution(self, centred_two_class_data):
+        """The stored limit is the F-based critical value."""
+        X, y = centred_two_class_data
+        model = SIMCA(n_components=2, scale=False, alpha=0.95).fit(X, y)
+        n_features = X.shape[1]
+
+        for class_model in model.class_models_.values():
+            expected = dmodx_limit(
+                0.95,
+                class_model.n_samples,
+                n_features,
+                class_model.n_components,
+            )
+            assert class_model.dmodx_limit == pytest.approx(expected)
+            assert np.isfinite(class_model.dmodx_limit)
+            assert class_model.s0 > 0
+
+
+class TestSIMCAComponentValidation:
+    """Finding 5: unusable component counts must fail loudly."""
+
+    def test_rejects_n_components_equal_to_n_features(self, two_class_data):
+        """A = K leaves no residual degrees of freedom."""
+        X, y = two_class_data
+        with pytest.raises(ValueError, match="residual degrees of freedom"):
+            SIMCA(n_components=X.shape[1], scale=True).fit(X, y)
+
+    def test_rejects_n_components_equal_to_class_size(self):
+        """A = n_class - 1 leaves no residual degrees of freedom."""
+        rng = np.random.default_rng(3)
+        X = rng.standard_normal((12, 30))
+        y = np.array([0] * 6 + [1] * 6)
+
+        with pytest.raises(ValueError, match="residual degrees of freedom"):
+            SIMCA(n_components=5, scale=False).fit(X, y)
+
+    def test_rejects_tiny_class(self):
+        """A class of three samples cannot carry a two-component model."""
+        rng = np.random.default_rng(4)
+        X = rng.standard_normal((9, 5))
+        y = np.array([0, 0, 0, 1, 1, 1, 1, 1, 1])
+
+        with pytest.raises(ValueError, match="residual degrees of freedom"):
+            SIMCA(n_components=2, scale=False).fit(X, y)
+
+    def test_auto_selection_never_exhausts_features(self):
+        """An unreachable R² threshold must not consume every feature."""
+        rng = np.random.default_rng(5)
+        X = np.vstack(
+            [
+                rng.standard_normal((25, 4)),
+                rng.standard_normal((25, 4)) + 4.0,
+            ]
+        )
+        y = np.array([0] * 25 + [1] * 25)
+
+        model = SIMCA(
+            n_components="auto",
+            component_selection="r2",
+            r2_threshold=1.0,
+            scale=False,
+        ).fit(X, y)
+
+        for class_model in model.class_models_.values():
+            assert class_model.n_components <= X.shape[1] - 1
+            assert np.isfinite(class_model.dmodx_limit)
+            assert class_model.dmodx_limit > 0
+            assert np.isfinite(class_model.t2_limit)
+            assert class_model.t2_limit > 0
+
+    @pytest.mark.parametrize(
+        "selection", ["r2", "q2", "eigenvalue"]
+    )
+    def test_auto_selection_respects_limits(self, selection):
+        """Every selector stays inside the usable component range."""
+        rng = np.random.default_rng(6)
+        X = np.vstack(
+            [
+                rng.standard_normal((25, 5)),
+                rng.standard_normal((25, 5)) + 4.0,
+            ]
+        )
+        y = np.array([0] * 25 + [1] * 25)
+
+        model = SIMCA(
+            n_components="auto",
+            component_selection=selection,
+            q2_cv_folds=5,
+            scale=False,
+        ).fit(X, y)
+
+        for class_model in model.class_models_.values():
+            upper = min(X.shape[1] - 1, class_model.n_samples - 2)
+            assert 1 <= class_model.n_components <= upper
+            assert np.isfinite(class_model.dmodx_limit)
+            assert np.isfinite(class_model.t2_limit)
+
+    def test_all_nan_row_is_rejected(self, two_class_data):
+        """A row without data must not win an argmin over NaN."""
+        X, y = two_class_data
+        model = SIMCA(
+            n_components=2, scale=True, unknown_handling="closest"
+        ).fit(X, y)
+
+        row = np.full((1, X.shape[1]), np.nan)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            prediction = model.predict(row)
+            proba = model.predict_proba(row)
+
+        assert prediction[0] is None
+        assert np.all(np.isfinite(proba))
+        assert proba.sum(axis=1)[0] == pytest.approx(1.0)
 
 
 if __name__ == "__main__":

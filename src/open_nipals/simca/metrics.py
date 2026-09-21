@@ -193,6 +193,12 @@ def calc_press(
 
     PRESS = sum((y_true - y_pred_cv)^2)
 
+    Only genuinely missing observations (NaN in ``y_true``) are excluded.
+    A non-finite *prediction* for an observed target is a failure of the
+    model, not missing data, so it contributes an infinite PRESS. This
+    keeps a fold that could not produce predictions from looking
+    perfectly predictive.
+
     Parameters
     ----------
     y_true : np.ndarray
@@ -205,20 +211,30 @@ def calc_press(
     Returns
     -------
     float or np.ndarray
-        PRESS value(s).
+        PRESS value(s). Infinite where a prediction failed.
     """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred_cv = np.asarray(y_pred_cv, dtype=float)
+
     if y_true.ndim == 1:
         y_true = y_true.reshape(-1, 1)
     if y_pred_cv.ndim == 1:
         y_pred_cv = y_pred_cv.reshape(-1, 1)
 
-    nan_mask = np.isnan(y_true) | np.isnan(y_pred_cv)
-    residuals = np.where(nan_mask, 0.0, y_true - y_pred_cv)
+    observed = ~np.isnan(y_true)
+    failed = observed & ~np.isfinite(y_pred_cv)
+
+    residuals = np.zeros(y_true.shape, dtype=float)
+    valid = observed & ~failed
+    residuals[valid] = y_true[valid] - y_pred_cv[valid]
 
     if per_variable:
-        return np.sum(residuals ** 2, axis=0)
-    else:
-        return np.sum(residuals ** 2)
+        press = np.sum(residuals ** 2, axis=0)
+        return np.where(np.any(failed, axis=0), np.inf, press)
+
+    if np.any(failed):
+        return np.inf
+    return float(np.sum(residuals ** 2))
 
 
 def calc_q2(
@@ -266,10 +282,16 @@ def calc_q2_cumulative_pca(
     X: np.ndarray,
     cv,
     max_components: int,
+    n_element_groups: int = 7,
     **model_kwargs
 ) -> np.ndarray:
     """
-    Calculate cumulative Q² for PCA using cross-validation.
+    Calculate cumulative Q² for PCA using element-wise cross-validation.
+
+    Uses the Wold-style scheme implemented in
+    :func:`~open_nipals.simca.cross_validation.cross_val_press_pca`: an
+    element is never used to predict itself, so Q² of pure noise stays at
+    or below zero for every component count.
 
     Parameters
     ----------
@@ -281,6 +303,8 @@ def calc_q2_cumulative_pca(
         Cross-validation object with split() method.
     max_components : int
         Maximum number of components to evaluate.
+    n_element_groups : int, default=7
+        Number of element groups held out within the validation rows.
     **model_kwargs
         Additional arguments for model constructor.
 
@@ -289,21 +313,18 @@ def calc_q2_cumulative_pca(
     np.ndarray
         Q² values, one per component.
     """
-    from .cross_validation import cross_val_predict_pca
-
-    n_samples, n_features = X.shape
-    nan_mask = np.isnan(X)
-    X_clean = np.where(nan_mask, 0.0, X)
-    ss_total = np.sum(X_clean ** 2)
+    from .cross_validation import cross_val_press_pca
 
     q2_values = np.zeros(max_components)
 
     for n_comp in range(1, max_components + 1):
-        X_pred_cv = cross_val_predict_pca(
-            model_class, X, n_comp, cv, **model_kwargs
+        press, ss_total = cross_val_press_pca(
+            model_class, X, n_comp, cv, n_element_groups, **model_kwargs
         )
-        press = calc_press(X, X_pred_cv)
-        q2_values[n_comp - 1] = 1.0 - (press / ss_total) if ss_total > 0 else 0.0
+        if ss_total > 0:
+            q2_values[n_comp - 1] = 1.0 - (press / ss_total)
+        else:
+            q2_values[n_comp - 1] = 0.0
 
     return q2_values
 

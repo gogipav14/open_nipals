@@ -13,8 +13,10 @@ from open_nipals.simca import (
     calc_press,
     calc_q2,
     calc_q2_cumulative_pca,
+    ComponentSelector,
     KFoldCV,
     cross_val_predict_pca,
+    cross_val_press_pca,
 )
 from open_nipals.nipalsPCA import NipalsPCA
 from open_nipals.nipalsPLS import NipalsPLS
@@ -220,6 +222,139 @@ class TestWithNaN:
         X_pred = X.copy() + 0.1
         press = calc_press(X, X_pred)
         assert press >= 0
+
+
+@pytest.fixture
+def noise_data():
+    """200 x 5 independent Gaussian noise, centred."""
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((200, 5))
+    return X - X.mean(axis=0)
+
+
+@pytest.fixture
+def rank_two_data():
+    """200 x 8 rank-2 signal with a little noise, centred."""
+    rng = np.random.default_rng(1)
+    scores = rng.standard_normal((200, 2))
+    loadings = rng.standard_normal((2, 8))
+    X = scores @ loadings + 0.05 * rng.standard_normal((200, 8))
+    return X - X.mean(axis=0)
+
+
+class TestElementWiseQ2:
+    """Finding 4: an element must never predict itself."""
+
+    def test_q2_of_noise_is_not_positive(self, noise_data):
+        """Pure noise cannot be predicted, at any component count."""
+        cv = KFoldCV(n_splits=7)
+        q2 = calc_q2_cumulative_pca(NipalsPCA, noise_data, cv, 4)
+
+        assert len(q2) == 4
+        assert np.all(q2 <= 0.05)
+
+    def test_q2_of_noise_does_not_grow(self, noise_data):
+        """Q² must not climb towards 1 as components are added."""
+        cv = KFoldCV(n_splits=7)
+        q2 = calc_q2_cumulative_pca(NipalsPCA, noise_data, cv, 4)
+
+        assert q2[-1] < q2[0] + 0.05
+
+    def test_selection_on_noise_picks_at_most_one(self, noise_data):
+        """Automatic selection must not chase noise."""
+        n_comp = ComponentSelector.select_by_q2(
+            NipalsPCA, noise_data, max_components=4, cv_folds=7
+        )
+        assert n_comp <= 1
+
+    def test_q2_peaks_at_the_true_rank(self, rank_two_data):
+        """A rank-2 signal peaks at two components."""
+        cv = KFoldCV(n_splits=7)
+        q2 = calc_q2_cumulative_pca(NipalsPCA, rank_two_data, cv, 5)
+
+        assert int(np.argmax(q2)) + 1 == 2
+        assert q2[1] > 0.9
+
+    def test_selection_on_rank_two_signal(self, rank_two_data):
+        """Automatic selection recovers the true rank."""
+        n_comp = ComponentSelector.select_by_q2(
+            NipalsPCA, rank_two_data, max_components=5, cv_folds=7
+        )
+        assert n_comp == 2
+
+    def test_press_is_fold_preprocessed(self, noise_data):
+        """A constant offset cannot make the data look predictable."""
+        cv = KFoldCV(n_splits=6)
+
+        q2_centred = calc_q2_cumulative_pca(NipalsPCA, noise_data, cv, 3)
+        q2_offset = calc_q2_cumulative_pca(
+            NipalsPCA, noise_data + 100.0, cv, 3
+        )
+
+        np.testing.assert_allclose(q2_centred, q2_offset, atol=1e-8)
+
+    def test_press_and_ss_total_are_finite(self, rank_two_data):
+        """cross_val_press_pca reports both PRESS and its reference."""
+        cv = KFoldCV(n_splits=5)
+        press, ss_total = cross_val_press_pca(
+            NipalsPCA, rank_two_data, 2, cv
+        )
+
+        assert np.isfinite(press) and press > 0
+        assert np.isfinite(ss_total) and ss_total > 0
+        assert press < ss_total
+
+    def test_raises_on_too_small_training_folds(self, noise_data):
+        """Folds that cannot carry the model are an error, not a score."""
+        cv = KFoldCV(n_splits=2)
+        with pytest.raises(ValueError, match="too few"):
+            cross_val_press_pca(NipalsPCA, noise_data[:6], 4, cv)
+
+
+class TestPRESSFailedPredictions:
+    """Finding 6: failed predictions must not earn Q² credit."""
+
+    def test_press_infinite_when_all_predictions_fail(
+        self, sample_pca_data
+    ):
+        """All-NaN predictions are a failure, not missing data."""
+        X = sample_pca_data
+        X_pred = np.full_like(X, np.nan)
+
+        assert calc_press(X, X_pred) == np.inf
+        assert calc_q2(X, X_pred) == -np.inf
+
+    def test_press_infinite_for_a_single_failure(self, sample_pca_data):
+        """One non-finite prediction is enough to poison PRESS."""
+        X = sample_pca_data
+        X_pred = X.copy()
+        X_pred[3, 2] = np.inf
+
+        assert calc_press(X, X_pred) == np.inf
+
+    def test_press_per_variable_marks_failed_columns(
+        self, sample_pca_data
+    ):
+        """Only the column that failed becomes infinite."""
+        X = sample_pca_data
+        X_pred = X.copy()
+        X_pred[0, 1] = np.nan
+
+        press = calc_press(X, X_pred, per_variable=True)
+
+        assert np.isinf(press[1])
+        assert np.all(np.isfinite(np.delete(press, 1)))
+
+    def test_missing_targets_are_still_masked(self, sample_pca_data):
+        """A genuinely missing observation contributes nothing."""
+        X = sample_pca_data.copy()
+        X[0, 0] = np.nan
+        X_pred = X + 0.1
+
+        press = calc_press(X, X_pred)
+
+        assert np.isfinite(press)
+        assert press == pytest.approx(0.01 * (X.size - 1))
 
 
 if __name__ == "__main__":

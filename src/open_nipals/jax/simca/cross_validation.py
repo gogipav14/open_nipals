@@ -8,11 +8,14 @@ import numpy as np
 import jax.numpy as jnp
 from typing import Iterator, Tuple, Optional
 
-# Import CV splitters from base module (they're just index generators)
+# Import CV splitters from base module (they're just index generators).
+# cross_val_press_pca is model-class agnostic, so the JAX models go
+# straight through the reference implementation.
 from open_nipals.simca.cross_validation import (
     KFoldCV,
     LeaveOneOutCV,
     VenetianBlindsCV,
+    cross_val_press_pca,
 )
 
 

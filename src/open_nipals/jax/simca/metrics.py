@@ -184,6 +184,11 @@ def calc_press(
     """
     Calculate PRESS using JAX.
 
+    Only genuinely missing observations (NaN in ``y_true``) are
+    excluded. A non-finite *prediction* for an observed target is a
+    failure of the model, not missing data, so it gives an infinite
+    PRESS rather than free credit.
+
     Parameters
     ----------
     y_true : jnp.ndarray
@@ -196,7 +201,7 @@ def calc_press(
     Returns
     -------
     float or jnp.ndarray
-        PRESS value(s).
+        PRESS value(s). Infinite where a prediction failed.
     """
     y_true = jnp.asarray(y_true)
     y_pred_cv = jnp.asarray(y_pred_cv)
@@ -206,13 +211,19 @@ def calc_press(
     if y_pred_cv.ndim == 1:
         y_pred_cv = y_pred_cv.reshape(-1, 1)
 
-    nan_mask = jnp.isnan(y_true) | jnp.isnan(y_pred_cv)
-    residuals = jnp.where(nan_mask, 0.0, y_true - y_pred_cv)
+    observed = ~jnp.isnan(y_true)
+    failed = observed & ~jnp.isfinite(y_pred_cv)
+    valid = observed & ~failed
+
+    residuals = jnp.where(valid, y_true - y_pred_cv, 0.0)
 
     if per_variable:
-        return jnp.sum(residuals ** 2, axis=0)
-    else:
-        return float(jnp.sum(residuals ** 2))
+        press = jnp.sum(residuals ** 2, axis=0)
+        return jnp.where(jnp.any(failed, axis=0), jnp.inf, press)
+
+    if bool(jnp.any(failed)):
+        return float("inf")
+    return float(jnp.sum(residuals ** 2))
 
 
 def calc_q2(
@@ -259,10 +270,15 @@ def calc_q2_cumulative_pca(
     X: jnp.ndarray,
     cv,
     max_components: int,
+    n_element_groups: int = 7,
     **model_kwargs
 ) -> np.ndarray:
     """
-    Calculate cumulative Q² for PCA using cross-validation with JAX.
+    Calculate cumulative Q² for PCA using element-wise cross-validation.
+
+    The cross-validation loop is the NumPy one; only the PCA models are
+    JAX models, so the Q² definition stays identical to the reference
+    implementation.
 
     Parameters
     ----------
@@ -274,6 +290,8 @@ def calc_q2_cumulative_pca(
         Cross-validation object.
     max_components : int
         Maximum number of components.
+    n_element_groups : int, default=7
+        Number of element groups held out within the validation rows.
     **model_kwargs
         Additional arguments for model constructor.
 
@@ -282,23 +300,18 @@ def calc_q2_cumulative_pca(
     np.ndarray
         Q² values, one per component.
     """
-    from .cross_validation import cross_val_predict_pca
+    from open_nipals.simca.metrics import (
+        calc_q2_cumulative_pca as _calc_q2_cumulative_pca,
+    )
 
-    X = np.asarray(X)  # Convert to NumPy for CV splits
-    nan_mask = np.isnan(X)
-    X_clean = np.where(nan_mask, 0.0, X)
-    ss_total = np.sum(X_clean ** 2)
-
-    q2_values = np.zeros(max_components)
-
-    for n_comp in range(1, max_components + 1):
-        X_pred_cv = cross_val_predict_pca(
-            model_class, X, n_comp, cv, **model_kwargs
-        )
-        press = calc_press(X, X_pred_cv)
-        q2_values[n_comp - 1] = 1.0 - (press / ss_total) if ss_total > 0 else 0.0
-
-    return q2_values
+    return _calc_q2_cumulative_pca(
+        model_class,
+        np.asarray(X),
+        cv,
+        max_components,
+        n_element_groups,
+        **model_kwargs,
+    )
 
 
 def calc_q2_cumulative_pls(

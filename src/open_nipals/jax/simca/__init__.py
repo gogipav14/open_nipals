@@ -26,16 +26,22 @@ from .cross_validation import (
     VenetianBlindsCV,
     cross_val_predict_pca,
     cross_val_predict_pls,
+    cross_val_press_pca,
 )
 
-# Re-export SIMCAClass and ComponentSelector from base module
-from open_nipals.simca.simca import SIMCAClass, ComponentSelector
+# Re-export shared pieces from the base module
+from open_nipals.simca.simca import (
+    SIMCAClass,
+    ComponentSelector,
+    dmodx_limit,
+)
 
 __all__ = [
     # Main classifier
     "SIMCA",
     "SIMCAClass",
     "ComponentSelector",
+    "dmodx_limit",
     # Metrics
     "calc_r2_x",
     "calc_r2_y",
@@ -51,4 +57,5 @@ __all__ = [
     "VenetianBlindsCV",
     "cross_val_predict_pca",
     "cross_val_predict_pls",
+    "cross_val_press_pca",
 ]
