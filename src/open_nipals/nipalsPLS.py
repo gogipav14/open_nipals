@@ -848,14 +848,18 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
     def get_reg_vector(self) -> np.array:
         """Give the user the regression vector for the model.
 
-        The regression vector B satisfies: y_pred = X @ B
-        This matches the prediction from predict(X).
+        The regression vector B satisfies y_pred = X @ B for complete X,
+        matching predict(X).
 
-        For PLS, the coefficient matrix is:
-        B = W @ (P.T @ W)^-1 @ diag(b) @ Q.T
-
-        where W = weights, P = X loadings, Q = Y loadings,
-        and b = regression coefficients (diagonal of regression_matrix).
+        transform() computes the scores by sequential deflation,
+        t_i = (X - sum_{j<i} t_j p_j.T) @ w_i, which in matrix form is
+        T = X @ W @ (I + triu(P.T @ W, 1))^-1. Hence
+        B = W @ (I + triu(P.T @ W, 1))^-1 @ diag(b) @ Q.T
+        with W = weights, P = X loadings, Q = Y loadings and b the inner
+        regression coefficients. For models fitted on complete data
+        P.T @ W is unit upper triangular and this is the textbook
+        W @ (P.T @ W)^-1 @ diag(b) @ Q.T; for models fitted with missing
+        data it is not, and only the deflation form matches predict().
 
         Raises:
             NotFittedError: If the model has not been fit.
@@ -874,11 +878,10 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         Q = self.loadings_y[:, :num_lvs]
         B_inner = self.regression_matrix[:num_lvs, :num_lvs]
 
-        # Compute (P.T @ W)^-1 correction for deflation
-        PTW_inv = np.linalg.inv(P.T @ W)
+        # Correction for the sequential deflation in transform()
+        deflation = np.eye(num_lvs) + np.triu(P.T @ W, 1)
 
-        # B = W @ (P.T @ W)^-1 @ B_inner @ Q.T
-        reg_vects = W @ PTW_inv @ B_inner @ Q.T
+        reg_vects = W @ np.linalg.inv(deflation) @ B_inner @ Q.T
 
         return reg_vects
 

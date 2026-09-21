@@ -401,3 +401,16 @@ def test_conditional_mean_keeps_input():
     assert np.array_equal(data, data_before, equal_nan=True), (
         "transform(method='conditional_mean') modified its input"
     )
+
+
+def test_zero_first_column():
+    """A column of zeros must not poison the NIPALS starting guess"""
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(60, 5))
+    data = data - data.mean(axis=0)
+    data[:, 0] = 0
+
+    model = NipalsPCA(n_components=2).fit(data)
+
+    assert np.all(np.isfinite(model.loadings)), "Loadings contain NaN"
+    assert np.all(np.isfinite(model.fit_scores)), "Scores contain NaN"

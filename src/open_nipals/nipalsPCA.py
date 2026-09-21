@@ -175,8 +175,12 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
         # Loop for all LVs
         for i in num_lvs:
-            # choose a column of input_array
-            t_new = data[:, [0]].copy()
+            # choose a column of input_array as the starting guess; a
+            # column of zeros would make every iteration NaN
+            start_col = 0
+            if not np.any(data[:, 0]):
+                start_col = np.argmax(np.nansum(data**2, axis=0))
+            t_new = data[:, [start_col]].copy()
 
             # Replace any nans w/ zero
             t_new[np.isnan(t_new)] = 0

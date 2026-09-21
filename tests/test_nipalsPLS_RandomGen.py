@@ -684,8 +684,14 @@ def test_reg_vector_matches_predict():
     data_y = data_y + 0.1 * rng.normal(size=(60, 2))
     data_y = data_y - data_y.mean(axis=0)
 
-    model = NipalsPLS(n_components=3).fit(data_x, data_y)
+    # After fitting with missing data P.T @ W is no longer unit triangular
+    data_x_nan = data_x.copy()
+    data_x_nan[rng.random(size=data_x.shape) < 0.3] = np.nan
+    data_x_nan = data_x_nan - np.nanmean(data_x_nan, axis=0)
 
-    assert np.allclose(
-        data_x @ model.get_reg_vector(), model.predict(data_x), atol=1e-10
-    ), "Regression vector does not reproduce the predictions"
+    for data_x_fit in (data_x, data_x_nan):
+        model = NipalsPLS(n_components=3).fit(data_x_fit, data_y)
+
+        assert np.allclose(
+            data_x @ model.get_reg_vector(), model.predict(data_x), atol=1e-10
+        ), "Regression vector does not reproduce the predictions"
