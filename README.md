@@ -123,15 +123,17 @@ pip install open_nipals[jax]        # CPU only
 pip install open_nipals[jax-cuda]   # NVIDIA GPU
 ```
 ```python
+import jax
 from open_nipals.jax import NipalsPCA, NipalsPLS
 
+jax.config.update("jax_enable_x64", True)  # see below
 model = NipalsPCA(n_components=5).fit(data)
 ```
 
 Things to know:
 
 - Inputs and all fitted attributes stay NumPy arrays, so the models can be mixed with the rest of `open_nipals` and `scikit-learn`.
-- Importing `open_nipals.jax` switches JAX to 64-bit mode (`jax_enable_x64`), which is required to match the NumPy results. With `dtype="float32"` the models compute in single precision instead, which is faster and halves the GPU memory, at the price of agreeing with the NumPy results to only a few digits (`tol_criteria` is floored at `1e-5`).
+- JAX computes in 32-bit unless its 64-bit mode is on. The models follow that setting: to reproduce the NumPy results, call `jax.config.update("jax_enable_x64", True)` in your application before fitting (the package does not change this process-wide setting for you). In float32 the models are faster and use half the GPU memory, but agree with the NumPy results to only a few digits (`tol_criteria` is floored at `1e-5`). Pass `dtype="float64"` or `dtype="float32"` to insist on a precision; `dtype="float64"` raises a clear error if 64-bit mode is off.
 - The first fit for a given data shape and number of components includes compilation. Later fits of the same shape, e.g. in cross validation, reuse the compiled code.
 - Small data sets do not benefit from a GPU; see the measurements below and `benchmarks/bench_jax.py` to reproduce them on your hardware.
 

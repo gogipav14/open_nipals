@@ -34,9 +34,25 @@ from open_nipals.jax.utils import _masked_mult, _resolve_dtype, _split_nan
 from typing import Optional, Tuple
 
 
-def _pinv_rtol(dtype: jnp.dtype) -> Optional[float]:
-    """Singular value cutoff for pinv: numpy's default in float64."""
-    return 1e-15 if dtype == jnp.float64 else None
+def _pinv_rtol(dtype: jnp.dtype) -> float:
+    """Relative singular value cutoff for pinv.
+
+    numpy's default in float64 and its float32 counterpart. Fixed values,
+    so the cutoff does not depend on the (padded) matrix dimensions.
+    """
+    return 1e-15 if dtype == jnp.float64 else 1e-6
+
+
+def _start_column(data: jnp.ndarray, preferred: int) -> jnp.ndarray:
+    """Column of data to start the NIPALS iteration from.
+
+    The preferred column, unless it is all zeros (that would make every
+    iteration NaN), then the column with the largest sum of squares.
+    """
+    sum_sq = jnp.sum(data**2, axis=0)
+    fallback = jnp.argmax(sum_sq)
+    col = jnp.where(sum_sq[preferred] > 0, preferred, fallback)
+    return jax.lax.dynamic_slice_in_dim(data, col, 1, axis=1)
 
 
 @partial(jax.jit, static_argnames=["n_add"])
@@ -71,8 +87,10 @@ def _fit_components(
         # guard against zero norm
         den = jnp.maximum(jnp.linalg.norm(t_new), 1e-12)
         conv_test = jnp.linalg.norm(t_old - t_new) / den
-        keep_going = (conv_test >= tol) & (num_iter < max_iter)
-        return (num_iter == 0) | keep_going
+        # written so that a NaN conv_test counts as not converged
+        not_done = ~(conv_test < tol) & (num_iter < max_iter)
+        # a non-finite iterate never recovers, stop and report it
+        return (num_iter == 0) | (not_done & jnp.isfinite(conv_test))
 
     def one_component(x0, _):
         def iterate(state):
@@ -88,7 +106,7 @@ def _fit_components(
             return (t_new, t_old, loadings_loc, num_iter + 1)
 
         # choose a column of input_array, NaNs are already zero
-        t_init = x0[:, [0]]
+        t_init = _start_column(x0, 0)
         state = (t_init, jnp.zeros_like(t_init), jnp.zeros((m, 1), x0.dtype), 0)
         t_new, _, loadings_loc, num_iter = jax.lax.while_loop(
             not_converged, iterate, state
@@ -206,7 +224,7 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
         max_iter: int = 10000,
         tol_criteria: float = 1e-6,
         mean_centered: bool = True,
-        dtype: str = "float64",
+        dtype: Optional[str] = None,
     ):
         """The constructor for the NipalsPCA class.
 
@@ -220,10 +238,11 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
             mean_centered (bool, optional): Whether or not the data is already
                 mean-centered. Defaults to True.
             dtype (str, optional): Precision to fit and transform in, either
-                'float64' (matches the NumPy version) or 'float32' (faster
-                and half the memory on GPU, tol_criteria floored at 1e-5).
-                Results are always returned as float64 numpy arrays.
-                Defaults to 'float64'.
+                'float64' (matches the NumPy version, requires JAX's 64-bit
+                mode) or 'float32' (faster and half the memory on GPU,
+                tol_criteria floored at 1e-5). Results are always returned
+                as float64 numpy arrays. Defaults to None, which follows
+                JAX's jax_enable_x64 setting.
 
         Returns:
             NipalsPCA object
@@ -283,7 +302,12 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
         for i, num_iter in enumerate(np.asarray(num_iters)):
             if verbose:
                 print(f"LV {fitted_components + i} took {num_iter} iterations")
-            if num_iter >= self.max_iter:
+            if not np.all(np.isfinite(loadings[:, i])):
+                warnings.warn(
+                    f"Non-finite values on LV {fitted_components + i}, "
+                    "the model is not usable"
+                )
+            elif num_iter >= self.max_iter:
                 warnings.warn(f"max_iter reached on LV {fitted_components + i}")
 
         if fitted_components == 0:

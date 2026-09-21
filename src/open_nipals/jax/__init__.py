@@ -11,17 +11,20 @@ Usage:
     pca = NipalsPCA(n_components=5)
     pca.fit(X)
 
-Importing this module enables 64-bit mode in JAX (jax_enable_x64), which is
-needed to reproduce the NumPy results. Pass dtype="float32" to the models
-to trade that precision for speed and memory on the GPU.
+The models compute in float64 when JAX's 64-bit mode is on and in float32
+otherwise (JAX defaults to 32-bit). Reproducing the NumPy results needs
+float64, so enable it in your application before fitting:
+
+    import jax
+    jax.config.update("jax_enable_x64", True)
+
+This module does not change that setting itself, as it is global to the
+process. Pass dtype="float64" or dtype="float32" to the models to insist on
+a precision instead of following the setting.
 """
 
-import jax
-
-jax.config.update("jax_enable_x64", True)
-
-from open_nipals.jax.nipalsPCA import NipalsPCA  # noqa: E402
-from open_nipals.jax.nipalsPLS import NipalsPLS  # noqa: E402
-from open_nipals.jax.utils import _nan_mult  # noqa: E402
+from open_nipals.jax.nipalsPCA import NipalsPCA
+from open_nipals.jax.nipalsPLS import NipalsPLS
+from open_nipals.jax.utils import _nan_mult
 
 __all__ = ["NipalsPCA", "NipalsPLS", "_nan_mult"]

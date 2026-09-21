@@ -12,6 +12,8 @@ try:
     import jax
     import jax.numpy as jnp
 
+    # The parity tests need float64; the package no longer sets this
+    jax.config.update("jax_enable_x64", True)
     JAX_AVAILABLE = True
 except ImportError:
     JAX_AVAILABLE = False
@@ -218,6 +220,58 @@ class TestNipalsPCAJax:
             scores_small / scale, scores_unit, rtol=rtol, atol=rtol
         )
 
+    def test_zero_first_column_warns(self, sample_data_clean):
+        """A zero start column must not silently give a NaN model."""
+        X = sample_data_clean.copy()
+        X[:, 0] = 0
+
+        pca_jax = NipalsPCA_JAX(n_components=2).fit(X)
+        assert np.all(np.isfinite(pca_jax.loadings))
+
+        # An all-zero matrix cannot be fitted, but must say so
+        with pytest.warns(UserWarning, match="Non-finite"):
+            NipalsPCA_JAX(n_components=1).fit(np.zeros_like(X))
+
+    @pytest.mark.parametrize("n_features", [3, 20])
+    def test_conditional_mean_cutoff_independent_of_padding(self, n_features):
+        """Unrelated missing features must not change an imputation.
+
+        Feature 2 equals feature 1, which has a small variance (1e-5).
+        Its conditional mean given feature 1 is feature 1, whatever the
+        number of other (missing, independent) features. With a cutoff
+        that grows with the padded dimension the small direction is
+        discarded and the imputation becomes zero.
+        """
+        from open_nipals.jax.nipalsPCA import _fill_conditional_mean
+
+        cov = np.eye(n_features)
+        cov[1, 1] = cov[2, 2] = cov[1, 2] = cov[2, 1] = 1e-5
+        x_row = np.zeros(n_features)
+        x_row[0], x_row[1] = 0.5, 0.01
+        obs = np.zeros(n_features)
+        obs[[0, 1]] = 1
+
+        filled = _fill_conditional_mean(
+            jnp.asarray(x_row[None], jnp.float32),
+            jnp.asarray(obs[None], jnp.float32),
+            jnp.asarray(cov, jnp.float32),
+            batch_size=1,
+        )
+
+        np.testing.assert_allclose(np.asarray(filled)[0, 2], 0.01, rtol=1e-3)
+
+    def test_float64_requires_x64(self, sample_data_clean):
+        jax.config.update("jax_enable_x64", False)
+        try:
+            with pytest.raises(ValueError, match="jax_enable_x64"):
+                NipalsPCA_JAX(n_components=2, dtype="float64").fit(sample_data_clean)
+
+            # No dtype given: follow the setting, i.e. float32 here
+            pca_jax = NipalsPCA_JAX(n_components=2).fit(sample_data_clean)
+            assert pca_jax.loadings.dtype == np.float64  # results stay float64
+        finally:
+            jax.config.update("jax_enable_x64", True)
+
     def test_distances(self, sample_data_with_nan):
         X = sample_data_with_nan
 
@@ -334,6 +388,24 @@ class TestNipalsPLSJax:
             np.testing.assert_allclose(
                 getattr(pls_jax, name), getattr(pls_ref, name), err_msg=name, **PARITY
             )
+
+    def test_reg_vector_after_nan_fit(self, sample_xy_data_with_nan):
+        """X @ get_reg_vector() must match predict(X) for complete X."""
+        X, Y = sample_xy_data_with_nan
+        X_complete = np.nan_to_num(X)
+
+        pls_jax = NipalsPLS_JAX(n_components=3).fit(X, Y)
+
+        np.testing.assert_allclose(
+            X_complete @ pls_jax.get_reg_vector(),
+            pls_jax.predict(X_complete),
+            **PARITY,
+        )
+
+    def test_constant_y_warns(self, sample_xy_data):
+        X, Y = sample_xy_data
+        with pytest.warns(UserWarning, match="Non-finite"):
+            NipalsPLS_JAX(n_components=1).fit(X, np.zeros_like(Y))
 
     def test_distances(self, sample_xy_data_with_nan):
         X, Y = sample_xy_data_with_nan

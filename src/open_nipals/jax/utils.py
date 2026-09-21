@@ -18,25 +18,31 @@ from typing import Optional, Tuple
 FLOAT32_MIN_TOL = 1e-5
 
 
-def _resolve_dtype(dtype: str, tol_criteria: float) -> Tuple[jnp.dtype, float]:
+def _resolve_dtype(
+    dtype: Optional[str], tol_criteria: float
+) -> Tuple[jnp.dtype, float]:
     """Translate the user-facing dtype string and floor the tolerance.
 
     Args:
-        dtype (str): Either 'float64' or 'float32'.
+        dtype (Optional[str]): 'float64', 'float32', or None to follow
+            JAX's x64 setting.
         tol_criteria (float): The requested convergence tolerance.
 
     Raises:
         ValueError: If dtype is not recognized, or float64 is requested
-            while jax_enable_x64 has been switched off.
+            while jax_enable_x64 is off.
 
     Returns:
         Tuple[jnp.dtype, float]: The JAX dtype and the usable tolerance.
     """
+    if dtype is None:
+        dtype = "float64" if jax.config.jax_enable_x64 else "float32"
+
     if dtype == "float64":
         if not jax.config.jax_enable_x64:
             raise ValueError(
-                "dtype='float64' requires jax_enable_x64. It is enabled when "
-                "open_nipals.jax is imported; do not disable it afterwards, "
+                "dtype='float64' requires JAX's 64-bit mode: call "
+                'jax.config.update("jax_enable_x64", True) before fitting, '
                 "or use dtype='float32'."
             )
         return jnp.float64, tol_criteria

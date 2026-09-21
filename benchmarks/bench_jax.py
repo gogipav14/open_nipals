@@ -73,6 +73,8 @@ def main():
         import jax
         from open_nipals.jax import NipalsPCA, NipalsPLS
 
+        jax.config.update("jax_enable_x64", True)
+
         device = f"{jax.devices()[0]} {args.dtype}"
         kwargs = {"dtype": args.dtype}
     else:

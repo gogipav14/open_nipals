@@ -35,6 +35,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.covariance import LedoitWolf
 import warnings
 from functools import partial
+from open_nipals.jax.nipalsPCA import _start_column
 from open_nipals.jax.utils import _masked_mult, _resolve_dtype, _split_nan
 from typing import Optional, Tuple, Union
 
@@ -79,8 +80,10 @@ def _fit_components(
         # guard against zero norm
         den = jnp.maximum(jnp.linalg.norm(ti), 1e-12)
         diff_norm = jnp.linalg.norm(ti - ti_old) / den
-        keep_going = (diff_norm >= tol) & (iter_count < max_iter)
-        return (iter_count == 0) | keep_going
+        # written so that a NaN diff_norm counts as not converged
+        not_done = ~(diff_norm < tol) & (iter_count < max_iter)
+        # a non-finite iterate never recovers, stop and report it
+        return (iter_count == 0) | (not_done & jnp.isfinite(diff_norm))
 
     def one_component(residuals, _):
         x_res, y_res = residuals
@@ -102,7 +105,7 @@ def _fit_components(
             return (ti, ti_old, ui, wi, qi, iter_count + 1)
 
         # Scores guess is a column of the Y residuals, NaNs are already zero
-        ui = jax.lax.dynamic_slice_in_dim(y_res, start_col, 1, axis=1)
+        ui = _start_column(y_res, start_col)
         state = (
             ui,
             jnp.zeros_like(ui),
@@ -200,7 +203,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         tol_criteria: float = 1e-6,
         mean_centered: bool = True,
         force_include: bool = False,
-        dtype: str = "float64",
+        dtype: Optional[str] = None,
     ):
         """Constructor for initialization.
 
@@ -210,10 +213,12 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             tol_criteria (float): Tolerance limit for convergence.
             mean_centered (bool): Whether the data is mean centered.
             force_include (bool): Force include rows with all NaNs in Y-block.
-            dtype (str): Precision to fit and transform in, either 'float64'
-                (matches the NumPy version) or 'float32' (faster and half
-                the memory on GPU, tol_criteria floored at 1e-5). Results
-                are always returned as float64 numpy arrays.
+            dtype (str, optional): Precision to fit and transform in, either
+                'float64' (matches the NumPy version, requires JAX's 64-bit
+                mode) or 'float32' (faster and half the memory on GPU,
+                tol_criteria floored at 1e-5). Results are always returned
+                as float64 numpy arrays. Defaults to None, which follows
+                JAX's jax_enable_x64 setting.
 
         Returns:
             NipalsPLS object
@@ -316,7 +321,12 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         for i, iter_count in enumerate(np.asarray(iter_counts)):
             if verbose:
                 print(f"LV {fitted_components + i} took {iter_count} iterations")
-            if iter_count >= self.max_iter:
+            if not np.all(np.isfinite(np.asarray(p)[:, i])):
+                warnings.warn(
+                    f"Non-finite values on LV {fitted_components + i}, "
+                    "the model is not usable"
+                )
+            elif iter_count >= self.max_iter:
                 warnings.warn(f"max_iter reached on LV {fitted_components + i}.")
 
         # Results live in numpy, like the rest of the sklearn ecosystem
@@ -709,14 +719,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
     def get_reg_vector(self) -> np.ndarray:
         """Get the regression vector for the model.
 
-        The regression vector B satisfies: y_pred = X @ B
-        This matches the prediction from predict(X).
-
-        For PLS, the coefficient matrix is:
-        B = W @ (P.T @ W)^-1 @ diag(b) @ Q.T
-
-        where W = weights, P = X loadings, Q = Y loadings,
-        and b = regression coefficients (diagonal of regression_matrix).
+        The regression vector B satisfies y_pred = X @ B for complete X,
+        matching predict(X): B = W @ (I + triu(P.T @ W, 1))^-1 @ diag(b)
+        @ Q.T, see open_nipals.nipalsPLS.NipalsPLS.get_reg_vector.
 
         Raises:
             NotFittedError: If model not fit.
@@ -733,11 +738,11 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         Q = jnp.array(self.loadings_y[:, :num_lvs])
         B_inner = jnp.array(self.regression_matrix[:num_lvs, :num_lvs])
 
-        # Compute (P.T @ W)^-1 correction for deflation
-        PTW_inv = jnp.linalg.inv(P.T @ W)
+        # Correction for the sequential deflation in transform(), see the
+        # NumPy version for the derivation
+        deflation = jnp.eye(num_lvs) + jnp.triu(P.T @ W, 1)
 
-        # B = W @ (P.T @ W)^-1 @ B_inner @ Q.T
-        reg_vects = W @ PTW_inv @ B_inner @ Q.T
+        reg_vects = W @ jnp.linalg.inv(deflation) @ B_inner @ Q.T
 
         return np.array(reg_vects)
 
