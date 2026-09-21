@@ -11,6 +11,11 @@ Usage:
     pca = NipalsPCA(n_components=5)
     pca.fit(X)
 
+    # SIMCA classifier
+    from open_nipals.jax.simca import SIMCA
+    simca = SIMCA(n_components=3)
+    simca.fit(X, y)
+
 The models compute in float64 when JAX's 64-bit mode is on and in float32
 otherwise (JAX defaults to 32-bit). Reproducing the NumPy results needs
 float64, so enable it in your application before fitting:
@@ -27,4 +32,4 @@ from open_nipals.jax.nipalsPCA import NipalsPCA
 from open_nipals.jax.nipalsPLS import NipalsPLS
 from open_nipals.jax.utils import _nan_mult
 
-__all__ = ["NipalsPCA", "NipalsPLS", "_nan_mult"]
+__all__ = ["NipalsPCA", "NipalsPLS", "_nan_mult", "simca"]
