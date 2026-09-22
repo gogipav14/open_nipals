@@ -610,6 +610,18 @@ class SIMCA(ClassifierMixin, BaseEstimator):
 
         X = self._prepare_input(X, check_features=False)
 
+        # Rows without a single observed value carry no information but
+        # would still count as samples in the limits and s0
+        empty_rows = np.all(np.isnan(X), axis=1)
+        if np.any(empty_rows):
+            warnings.warn(
+                f"Dropping {int(empty_rows.sum())} training rows in which "
+                "every value is missing."
+            )
+            X, y = X[~empty_rows], y[~empty_rows]
+            if X.shape[0] == 0:
+                raise ValueError("Cannot fit SIMCA on zero samples")
+
         # Fitted state is only replaced once every class model succeeded,
         # a rejected refit leaves the previous model usable
         classes = np.unique(y)

@@ -177,8 +177,10 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
         for i in num_lvs:
             # choose a column of input_array as the starting guess; a
             # column of zeros would make every iteration NaN
+            # (NaN counts as nonzero for np.any, so test the observed
+            # sum of squares instead)
             start_col = 0
-            if not np.any(data[:, 0]):
+            if not np.nansum(data[:, 0] ** 2) > 0:
                 start_col = np.argmax(np.nansum(data**2, axis=0))
             t_new = data[:, [start_col]].copy()
 

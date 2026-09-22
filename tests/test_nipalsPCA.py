@@ -414,3 +414,16 @@ def test_zero_first_column():
 
     assert np.all(np.isfinite(model.loadings)), "Loadings contain NaN"
     assert np.all(np.isfinite(model.fit_scores)), "Scores contain NaN"
+
+
+def test_zero_first_column_with_nan():
+    """Zeros plus NaNs in the start column must also trigger the fallback"""
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(40, 6))
+    data = data - data.mean(axis=0)
+    data[:, 0] = 0.0
+    data[::7, 0] = np.nan
+
+    model = NipalsPCA(n_components=2).fit(data)
+
+    assert np.all(np.isfinite(model.loadings)), "Loadings contain NaN"

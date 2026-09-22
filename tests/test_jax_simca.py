@@ -497,3 +497,27 @@ class TestJAXSIMCAReviewRound5:
         pca.set_components(1)
         np.testing.assert_allclose(calc_r2_cumulative_pca(pca, X), expected)
         assert pca.n_components == 1
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+class TestJAXSIMCAReviewRound6:
+    def test_constant_feature_with_nan_first(self):
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(40, 6))
+        X[:, 0] = 2.5
+        X[::5, 0] = np.nan
+        y = np.array([0] * 20 + [1] * 20)
+
+        model = SIMCA_JAX(n_components=2).fit(X, y)
+
+        assert np.all(np.isfinite(model.get_distances(X)["dmodx"]))
+
+    def test_all_nan_training_rows_are_dropped(self):
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(40, 5))
+        X_padded = np.vstack([X, np.full((10, 5), np.nan)])
+        with pytest.warns(UserWarning, match="Dropping 10"):
+            model = SIMCA_JAX(n_components=2).fit(
+                X_padded, np.zeros(50, dtype=int)
+            )
+        assert model.class_models_[0].n_samples == 40

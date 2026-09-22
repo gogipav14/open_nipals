@@ -953,3 +953,40 @@ class TestMetricsReviewRound5:
 
         np.testing.assert_allclose(r2, expected)
         assert pca.n_components == 1  # restored
+
+
+class TestSIMCAReviewRound6:
+    """Findings of the sixth adversarial review."""
+
+    def test_all_nan_training_rows_are_dropped(self):
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(40, 5))
+        y = np.zeros(40, dtype=int)
+        reference = SIMCA(n_components=2, scale=False).fit(X, y)
+
+        X_padded = np.vstack([X, np.full((360, 5), np.nan)])
+        y_padded = np.zeros(400, dtype=int)
+        with pytest.warns(UserWarning, match="Dropping 360"):
+            model = SIMCA(n_components=2, scale=False).fit(X_padded, y_padded)
+
+        ref_model = reference.class_models_[0]
+        new_model = model.class_models_[0]
+        assert new_model.n_samples == 40
+        assert new_model.s0 == pytest.approx(ref_model.s0)
+        assert new_model.dmodx_limit == pytest.approx(ref_model.dmodx_limit)
+        assert list(model.predict(X)) == list(reference.predict(X))
+
+    @pytest.mark.parametrize("position", [0, -1])
+    def test_constant_feature_with_nan_anywhere(self, position):
+        """A constant, partly missing feature must fit in any column."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(40, 6))
+        X[:, position] = 2.5
+        X[::5, position] = np.nan
+        y = np.array([0] * 20 + [1] * 20)
+
+        model = SIMCA(n_components=2).fit(X, y)
+
+        distances = model.get_distances(X)
+        assert np.all(np.isfinite(distances["t2"]))
+        assert np.all(np.isfinite(distances["dmodx"]))
