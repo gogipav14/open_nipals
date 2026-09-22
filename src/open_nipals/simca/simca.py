@@ -63,6 +63,16 @@ def _residual_sums(
     return sse, n_observed
 
 
+def _numerical_rank(X: np.ndarray) -> int:
+    """Numerical rank of the centred data, missing values set to zero.
+
+    Zero filling can only add rank, so this is an upper bound when
+    values are missing and exact otherwise.
+    """
+    X = np.where(np.isnan(X), 0.0, X)
+    return int(np.linalg.matrix_rank(X - X.mean(axis=0)))
+
+
 def _determined_rows(X_class: np.ndarray, n_components: int) -> np.ndarray:
     """
     Rows with at least n_components + 1 observed varying features.
@@ -254,9 +264,23 @@ class ComponentSelector:
                 "samples or fewer folds."
             )
 
-        q2_values = calc_q2_cumulative_pca(
-            model_class, X, cv, max_components, scale=scale, **model_kwargs
-        )
+        # A fold can be numerically singular for the largest counts even
+        # when the full class is not; fall back to fewer components
+        while True:
+            try:
+                q2_values = calc_q2_cumulative_pca(
+                    model_class,
+                    X,
+                    cv,
+                    max_components,
+                    scale=scale,
+                    **model_kwargs,
+                )
+                break
+            except np.linalg.LinAlgError:
+                if max_components == 1:
+                    raise
+                max_components -= 1
 
         # Find where Q² stops improving
         best_n = 1
@@ -632,6 +656,9 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         n_samples = X_class.shape[0]
         n_features = _n_varying(X_class)
         max_components = self._max_components(n_samples, n_features)
+
+        # Beyond rank - 1 no residual is left (duplicated channels etc.)
+        max_components = min(max_components, _numerical_rank(X_class) - 1)
 
         # With missing data a larger count drops more rows (see
         # _determined_rows); only offer counts that still leave a usable

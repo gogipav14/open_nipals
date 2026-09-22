@@ -1264,3 +1264,28 @@ class TestSIMCAReviewRound12:
         distances = model.get_distances(X)
         assert np.all(np.isfinite(distances["t2"]))
         assert np.all(np.isfinite(distances["dmodx"]))
+
+
+class TestSIMCAReviewRound13:
+    """Finding of the thirteenth adversarial review."""
+
+    @pytest.mark.parametrize("selection", ["r2", "q2", "eigenvalue"])
+    def test_auto_selection_on_rank_deficient_data(self, selection):
+        """Duplicated channels: rank 2, so at most 1 component."""
+        X = np.repeat(
+            np.tile(
+                [[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]], (14, 1)
+            ),
+            4,
+            axis=1,
+        )
+        y = np.zeros(56, dtype=int)
+
+        model = SIMCA(n_components="auto", component_selection=selection).fit(
+            X, y
+        )
+
+        assert model.class_models_[0].n_components == 1
+        distances = model.get_distances(X)
+        assert np.all(np.isfinite(distances["t2"]))
+        assert np.all(np.isfinite(distances["dmodx"]))
