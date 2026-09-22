@@ -1192,3 +1192,50 @@ class TestSIMCAReviewRound10:
         outlier = ref_class.class_mean + 8 * ref_class.class_std * p1
         assert reference.predict(outlier[None])[0] is None
         assert model.predict(outlier[None])[0] is None
+
+
+class TestSIMCAReviewRound11:
+    """Finding of the eleventh adversarial review."""
+
+    def test_row_filter_repeats_when_features_become_constant(self):
+        rng = np.random.default_rng(0)
+        dense = np.column_stack(
+            [rng.normal(size=(60, 5)), np.full((60, 2), 4.0)]
+        )
+        reference = SIMCA(n_components=2, unknown_handling="reject").fit(
+            dense, np.zeros(60, dtype=int)
+        )
+
+        # 179 rows: one varying feature plus the two constants
+        sparse = np.full((179, 7), np.nan)
+        sparse[np.arange(179), rng.integers(0, 5, 179)] = rng.normal(size=179)
+        sparse[:, 5:] = 4.0
+        # 2 singletons that make the "constant" features vary
+        singles = np.full((2, 7), np.nan)
+        singles[0, 5], singles[1, 6] = 9.0, -9.0
+
+        with pytest.warns(UserWarning, match="dropping 181"):
+            model = SIMCA(n_components=2, unknown_handling="reject").fit(
+                np.vstack([dense, sparse, singles]),
+                np.zeros(241, dtype=int),
+            )
+
+        assert model.class_models_[0].n_samples == 60
+        np.testing.assert_allclose(
+            model.get_distances(dense)["t2"],
+            reference.get_distances(dense)["t2"],
+            rtol=1e-6,
+        )
+        ref_class = reference.class_models_[0]
+        p1 = ref_class.pca_model.loadings[:, 0]
+        outlier = ref_class.class_mean + 6 * ref_class.class_std * p1
+        assert reference.predict(outlier[None])[0] is None
+        assert model.predict(outlier[None])[0] is None
+
+
+def test_class_without_usable_rows_raises_clearly():
+    X = np.full((10, 4), np.nan)
+    X[:, 0] = np.arange(10.0)  # one varying feature per row only
+    with pytest.warns(UserWarning, match="dropping 10"):
+        with pytest.raises(ValueError, match="no training row"):
+            SIMCA(n_components=1).fit(X, np.zeros(10, dtype=int))

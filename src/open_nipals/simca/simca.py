@@ -63,25 +63,43 @@ def _residual_sums(
     return sse, n_observed
 
 
+def _determined_rows(X_class: np.ndarray, n_components: int) -> np.ndarray:
+    """
+    Rows with at least n_components + 1 observed varying features.
+
+    Dropping rows can make a feature constant, which can leave further
+    rows short of observed varying features, so the test is repeated
+    until no more rows are removed.
+    """
+    keep = np.ones(X_class.shape[0], dtype=bool)
+    while True:
+        varying = _varying_mask(X_class[keep])
+        n_observed = np.sum(~np.isnan(X_class[:, varying]), axis=1)
+        new_keep = keep & (n_observed >= n_components + 1)
+        if np.array_equal(new_keep, keep) or not np.any(new_keep):
+            return new_keep
+        keep = new_keep
+
+
 def _informative_rows(X_class: np.ndarray, class_label: Any) -> np.ndarray:
     """
-    Drop training rows that carry no information for the class model.
+    Drop training rows that cannot inform any class model.
 
-    A row carries information only if it has an observed value in a
-    feature that varies within the class. Rows that are entirely
-    missing, or observed only in class-constant features, become all
-    zero after centring and add nothing to the model, but would still
-    count as samples in the limits and the residual scale s0.
+    Every model has at least one component, so a row needs at least two
+    observed varying features to have a determined score and a residual.
+    Entirely missing rows, rows observed only in class-constant features
+    and singletons are dropped (repeatedly, see _determined_rows), with
+    a warning; they would otherwise count as samples in the component
+    selection, the limits and s0.
     """
-    varying = _varying_mask(X_class)
-    informative = np.any(~np.isnan(X_class[:, varying]), axis=1)
-    n_dropped = int(np.sum(~informative))
+    keep = _determined_rows(X_class, 1)
+    n_dropped = int(np.sum(~keep))
     if n_dropped:
         warnings.warn(
             f"Class {class_label!r}: dropping {n_dropped} training rows "
-            "without an observed value in any varying feature."
+            "with fewer than 2 observed varying features."
         )
-    return X_class[informative]
+    return X_class[keep]
 
 
 @dataclass
@@ -691,6 +709,11 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             mask = y == class_label
             X_class = _informative_rows(X[mask], class_label)
             n_samples_class, n_features = X_class.shape
+            if n_samples_class == 0:
+                raise ValueError(
+                    f"Class {class_label!r} has no training row with at "
+                    "least 2 observed varying features."
+                )
             # Degrees of freedom and limits count varying features only
             n_varying = _n_varying(X_class)
 
@@ -714,9 +737,7 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             # residual, yet it would count in the T2 score variances, the
             # sample count of the limits and s0. Drop such rows and
             # re-estimate the class statistics without them.
-            varying = _varying_mask(X_class)
-            n_observed = np.sum(~np.isnan(X_class[:, varying]), axis=1)
-            determined = n_observed >= n_comp + 1
+            determined = _determined_rows(X_class, n_comp)
             if not np.all(determined):
                 warnings.warn(
                     f"Class {class_label!r}: dropping "
