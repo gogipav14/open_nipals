@@ -26,10 +26,10 @@ import jax.numpy as jnp
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.exceptions import NotFittedError
-from sklearn.covariance import LedoitWolf
 import warnings
 from scipy.stats import f as F_dist
 from functools import partial
+from open_nipals.nipalsPCA import NipalsPCA as _ReferenceNipalsPCA
 from open_nipals.jax.utils import (
     _full_precision_methods,
     _masked_mult,
@@ -525,110 +525,10 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
         return np.array(out_data)
 
-    def calc_imd(
-        self,
-        input_scores: Optional[np.ndarray] = None,
-        input_array: Optional[np.ndarray] = None,
-        metric: str = "HotellingT2",
-        covariance: str = "diag",
-    ) -> np.ndarray:
-        """Calculate within-model distance (Hotelling's T2).
-
-        Args:
-            input_scores (Optional[np.ndarray], optional): The scores.
-                Defaults to None.
-            input_array (Optional[np.ndarray], optional): The input data.
-                Defaults to None.
-            metric (str, optional): The metric to use.
-                Valid options are {'HotellingT2'}. Defaults to 'HotellingT2'.
-            covariance (str, optional): Method to compute covariance. Valid
-                options are {'diag', 'full', 'ledoit_wolf'}.
-                Defaults to 'diag'.
-
-        Raises:
-            NotFittedError: Model has not been fit yet.
-            ValueError: Neither scores nor input data provided.
-            NotImplementedError: Unknown metric or covariance method.
-
-        Returns:
-            np.ndarray: The calculated within-model distance.
-        """
-        if not self.__sklearn_is_fitted__():
-            raise NotFittedError(
-                "Model has not yet been fit. Try fit() or fit_transform() instead."
-            )
-
-        if metric == "HotellingT2":
-            if (input_array is None) and (input_scores is None):
-                raise ValueError("No values provided.")
-
-            elif (input_array is not None) and (input_scores is not None):
-                warnings.warn(
-                    "Both Scores and Data are given. Operating on Data alone."
-                )
-                out_t2 = self.calc_imd(
-                    input_array=input_array, covariance=covariance
-                )
-
-            elif (input_scores is None) and (input_array is not None):
-                scores = self.transform(input_array)
-                out_t2 = self.calc_imd(
-                    input_scores=scores, covariance=covariance
-                )
-
-            else:
-                # Use JAX for vectorized computation
-                scores_jax = jnp.array(input_scores)
-                fit_scores_jax = jnp.array(
-                    self.fit_scores[:, : self.n_components]
-                )
-
-                _, num_lvs = scores_jax.shape
-                num_lvs_fit = self.n_components
-
-                if num_lvs != num_lvs_fit:
-                    raise ValueError(
-                        "input_scores have different number of columns/latent "
-                        "variables than model n_components."
-                    )
-
-                fit_means = jnp.mean(fit_scores_jax, axis=0)
-
-                if covariance == "diag":
-                    fit_vars = jnp.var(fit_scores_jax, axis=0, ddof=1)
-                    out_t2 = jnp.sum(
-                        (scores_jax - fit_means) ** 2 / fit_vars, axis=1
-                    ).reshape(-1, 1)
-                elif covariance == "full":
-                    # Use full covariance matrix
-                    cov_matrix = jnp.cov(fit_scores_jax.T, ddof=1)
-                    cov_inv = jnp.linalg.pinv(cov_matrix)
-                    diff = scores_jax - fit_means
-                    out_t2 = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
-                        -1, 1
-                    )
-                elif covariance == "ledoit_wolf":
-                    # Compute full covariance matrix with Ledoit-Wolf shrinkage
-                    lw_obj = LedoitWolf(
-                        assume_centered=self.mean_centered
-                    ).fit(np.array(fit_scores_jax))
-                    cov_inv = jnp.linalg.pinv(jnp.array(lw_obj.covariance_))
-                    diff = scores_jax - fit_means
-                    out_t2 = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
-                        -1, 1
-                    )
-                else:
-                    raise NotImplementedError(
-                        f"Covariance method {covariance} not implemented. "
-                        "Possible methods are {'diag', 'full', 'ledoit_wolf'}."
-                    )
-                out_t2 = np.array(out_t2)
-        else:
-            raise NotImplementedError(
-                "This metric has not been implemented. See doc."
-            )
-
-        return out_t2
+    # Hotelling's T2 only needs the scores and a (components x components)
+    # covariance; the NumPy code does that inversion in float64, which
+    # keeps low-variance components that a float32 pinv cutoff would drop
+    calc_imd = _ReferenceNipalsPCA.calc_imd
 
     def calc_oomd(
         self, input_array: np.ndarray, metric: str = "QRes"

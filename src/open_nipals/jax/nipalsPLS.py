@@ -32,10 +32,10 @@ import jax.numpy as jnp
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
 from sklearn.exceptions import NotFittedError
-from sklearn.covariance import LedoitWolf
 import warnings
 from functools import partial
 from open_nipals.jax.nipalsPCA import _start_column
+from open_nipals.nipalsPLS import NipalsPLS as _ReferenceNipalsPLS
 from open_nipals.jax.utils import (
     _full_precision_methods,
     _masked_mult,
@@ -543,94 +543,10 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
                 "Model has already been fit. Try transform instead."
             )
 
-    def calc_imd(
-        self,
-        input_scores: Optional[np.ndarray] = None,
-        input_array: Optional[np.ndarray] = None,
-        metric: str = "HotellingT2",
-        covariance: str = "diag",
-    ):
-        """Calculate in-model distance (Hotelling's T2).
-
-        Args:
-            input_scores (Optional[np.ndarray]): Scores array.
-            input_array (Optional[np.ndarray]): Data array.
-            metric (str): Metric to compute. Defaults to 'HotellingT2'.
-            covariance (str): Method to compute covariance. Valid options are
-                {'diag', 'full', 'ledoit_wolf'}. Defaults to 'diag'.
-
-        Raises:
-            NotFittedError: If model not fit.
-            ValueError: If no values provided.
-
-        Returns:
-            float: The within-model distance(s).
-        """
-        if not self.__sklearn_is_fitted__():
-            raise NotFittedError(
-                "Model has not yet been fit. Try fit() or fit_transform()."
-            )
-        elif (input_array is None) and (input_scores is None):
-            raise ValueError("No values provided.")
-
-        if input_array is not None:
-            if input_scores is not None:
-                warnings.warn(
-                    "Both Scores and Data given. Operating on Data alone."
-                )
-            scores = self.transform(X=input_array)
-        elif input_scores is not None:
-            scores = input_scores
-
-        if metric == "HotellingT2":
-            num_lvs_fit = self.n_components
-
-            if scores.shape[1] != num_lvs_fit:
-                raise ValueError(
-                    "input_scores have more columns/latent variables than "
-                    "model was fit with."
-                )
-
-            # Use JAX for computation
-            scores_jax = jnp.array(scores)
-            fit_scores_jax = jnp.array(self.fit_scores_x[:, :num_lvs_fit])
-
-            fit_means = jnp.mean(fit_scores_jax, axis=0)
-
-            if covariance == "diag":
-                fit_vars = jnp.var(fit_scores_jax, axis=0, ddof=1)
-                out_imd = jnp.sum(
-                    (scores_jax - fit_means) ** 2 / fit_vars, axis=1
-                ).reshape(-1, 1)
-            elif covariance == "full":
-                # Use full covariance matrix
-                cov_matrix = jnp.cov(fit_scores_jax.T, ddof=1)
-                cov_inv = jnp.linalg.pinv(cov_matrix)
-                diff = scores_jax - fit_means
-                out_imd = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
-                    -1, 1
-                )
-            elif covariance == "ledoit_wolf":
-                # Compute full covariance matrix with Ledoit-Wolf shrinkage
-                lw_obj = LedoitWolf(assume_centered=self.mean_centered).fit(
-                    np.array(fit_scores_jax)
-                )
-                cov_inv = jnp.linalg.pinv(jnp.array(lw_obj.covariance_))
-                diff = scores_jax - fit_means
-                out_imd = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
-                    -1, 1
-                )
-            else:
-                raise NotImplementedError(
-                    f"Covariance method {covariance} not implemented. "
-                    "Possible methods are {'diag', 'full', 'ledoit_wolf'}."
-                )
-
-            return np.array(out_imd)
-        else:
-            raise ValueError(
-                "Unknown metric requested (metric = HotellingT2)."
-            )
+    # Hotelling's T2 only needs the scores and a (components x components)
+    # covariance; the NumPy code does that inversion in float64, which
+    # keeps low-variance components that a float32 pinv cutoff would drop
+    calc_imd = _ReferenceNipalsPLS.calc_imd
 
     def inverse_transform(self, X: np.ndarray) -> np.ndarray:
         """Transform scores back to simulated data.

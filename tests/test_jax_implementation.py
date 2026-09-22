@@ -135,7 +135,9 @@ def sample_xy_data_with_nan(sample_xy_data):
 class TestNipalsPCAJax:
     """Test JAX PCA implementation against NumPy."""
 
-    @pytest.mark.parametrize("data", ["sample_data_clean", "sample_data_with_nan"])
+    @pytest.mark.parametrize(
+        "data", ["sample_data_clean", "sample_data_with_nan"]
+    )
     def test_fit(self, data, request):
         """Scores and loadings match the NumPy fit, with and without NaNs."""
         X = request.getfixturevalue(data)
@@ -144,9 +146,13 @@ class TestNipalsPCAJax:
         pca_jax = NipalsPCA_JAX(n_components=5).fit(X)
 
         np.testing.assert_allclose(pca_jax.loadings, pca_np.loadings, **PARITY)
-        np.testing.assert_allclose(pca_jax.fit_scores, pca_np.fit_scores, **PARITY)
+        np.testing.assert_allclose(
+            pca_jax.fit_scores, pca_np.fit_scores, **PARITY
+        )
 
-    @pytest.mark.parametrize("method", ["naive", "projection", "conditional_mean"])
+    @pytest.mark.parametrize(
+        "method", ["naive", "projection", "conditional_mean"]
+    )
     def test_transform_with_nan(self, sample_data_with_nan, method):
         """All missing data transform methods match NumPy."""
         X = sample_data_with_nan
@@ -166,7 +172,9 @@ class TestNipalsPCAJax:
         with pytest.raises(ValueError):
             pca_jax.transform(sample_data_with_nan, method="nonsense")
 
-    @pytest.mark.parametrize("data", ["sample_data_clean", "sample_data_with_nan"])
+    @pytest.mark.parametrize(
+        "data", ["sample_data_clean", "sample_data_with_nan"]
+    )
     def test_set_components(self, data, request):
         """Adding components later gives the same model as NumPy."""
         X = request.getfixturevalue(data)
@@ -175,7 +183,9 @@ class TestNipalsPCAJax:
         pca_jax = NipalsPCA_JAX(n_components=2).fit(X).set_components(5)
 
         np.testing.assert_allclose(pca_jax.loadings, pca_np.loadings, **PARITY)
-        np.testing.assert_allclose(pca_jax.fit_scores, pca_np.fit_scores, **PARITY)
+        np.testing.assert_allclose(
+            pca_jax.fit_scores, pca_np.fit_scores, **PARITY
+        )
 
     def test_set_components_shrink_then_grow(self, sample_data_with_nan):
         """Components added after shrinking must not repeat fitted ones."""
@@ -185,7 +195,9 @@ class TestNipalsPCAJax:
         pca_jax = NipalsPCA_JAX(n_components=4).fit(X)
         pca_jax.set_components(2).set_components(6)
 
-        np.testing.assert_allclose(pca_jax.loadings, pca_ref.loadings, **PARITY)
+        np.testing.assert_allclose(
+            pca_jax.loadings, pca_ref.loadings, **PARITY
+        )
 
     def test_conditional_mean_ignores_fit_history(self, sample_data_with_nan):
         """Same scores whether or not more components were fitted before."""
@@ -202,7 +214,8 @@ class TestNipalsPCAJax:
         )
 
     @pytest.mark.parametrize(
-        "dtype, scale, rtol", [("float64", 1e-8, 1e-6), ("float32", 1e-3, 1e-2)]
+        "dtype, scale, rtol",
+        [("float64", 1e-8, 1e-6), ("float32", 1e-3, 1e-2)],
     )
     def test_conditional_mean_scale_equivariant(
         self, sample_data_with_nan, dtype, scale, rtol
@@ -214,7 +227,9 @@ class TestNipalsPCAJax:
         pca_small = NipalsPCA_JAX(n_components=3, dtype=dtype).fit(X * scale)
 
         scores_unit = pca_unit.transform(X.copy(), method="conditional_mean")
-        scores_small = pca_small.transform(X.copy() * scale, method="conditional_mean")
+        scores_small = pca_small.transform(
+            X.copy() * scale, method="conditional_mean"
+        )
 
         np.testing.assert_allclose(
             scores_small / scale, scores_unit, rtol=rtol, atol=rtol
@@ -264,7 +279,9 @@ class TestNipalsPCAJax:
         jax.config.update("jax_enable_x64", False)
         try:
             with pytest.raises(ValueError, match="jax_enable_x64"):
-                NipalsPCA_JAX(n_components=2, dtype="float64").fit(sample_data_clean)
+                NipalsPCA_JAX(n_components=2, dtype="float64").fit(
+                    sample_data_clean
+                )
 
             # No dtype given: follow the setting, i.e. float32 here
             pca_jax = NipalsPCA_JAX(n_components=2).fit(sample_data_clean)
@@ -279,9 +296,13 @@ class TestNipalsPCAJax:
         pca_jax = NipalsPCA_JAX(n_components=3).fit(X)
 
         np.testing.assert_allclose(
-            pca_jax.calc_imd(input_array=X), pca_np.calc_imd(input_array=X), **PARITY
+            pca_jax.calc_imd(input_array=X),
+            pca_np.calc_imd(input_array=X),
+            **PARITY,
         )
-        np.testing.assert_allclose(pca_jax.calc_oomd(X), pca_np.calc_oomd(X), **PARITY)
+        np.testing.assert_allclose(
+            pca_jax.calc_oomd(X), pca_np.calc_oomd(X), **PARITY
+        )
 
     def test_inverse_transform(self, sample_data_clean):
         X = sample_data_clean
@@ -303,7 +324,9 @@ class TestNipalsPCAJax:
         pca_jax = NipalsPCA_JAX(n_components=3, dtype="float32").fit(X)
 
         assert pca_jax.loadings.dtype == np.float64
-        np.testing.assert_allclose(pca_jax.loadings, pca_np.loadings, atol=1e-2)
+        np.testing.assert_allclose(
+            pca_jax.loadings, pca_np.loadings, atol=1e-2
+        )
 
     def test_max_iter_warns(self, sample_data_clean):
         with pytest.warns(UserWarning, match="max_iter reached on LV 0"):
@@ -333,7 +356,9 @@ PLS_ATTRIBUTES = [
 class TestNipalsPLSJax:
     """Test JAX PLS implementation against NumPy."""
 
-    @pytest.mark.parametrize("data", ["sample_xy_data", "sample_xy_data_with_nan"])
+    @pytest.mark.parametrize(
+        "data", ["sample_xy_data", "sample_xy_data_with_nan"]
+    )
     def test_fit(self, data, request):
         """Every fitted attribute matches NumPy, with and without NaNs."""
         X, Y = request.getfixturevalue(data)
@@ -343,17 +368,24 @@ class TestNipalsPLSJax:
 
         for name in PLS_ATTRIBUTES:
             np.testing.assert_allclose(
-                getattr(pls_jax, name), getattr(pls_np, name), err_msg=name, **PARITY
+                getattr(pls_jax, name),
+                getattr(pls_np, name),
+                err_msg=name,
+                **PARITY,
             )
 
-    @pytest.mark.parametrize("data", ["sample_xy_data", "sample_xy_data_with_nan"])
+    @pytest.mark.parametrize(
+        "data", ["sample_xy_data", "sample_xy_data_with_nan"]
+    )
     def test_predict_and_transform(self, data, request):
         X, Y = request.getfixturevalue(data)
 
         pls_np = NipalsPLS(n_components=3).fit(X, Y)
         pls_jax = NipalsPLS_JAX(n_components=3).fit(X, Y)
 
-        np.testing.assert_allclose(pls_jax.predict(X), pls_np.predict(X), **PARITY)
+        np.testing.assert_allclose(
+            pls_jax.predict(X), pls_np.predict(X), **PARITY
+        )
         np.testing.assert_allclose(
             pls_jax.get_reg_vector(), pls_np.get_reg_vector(), **PARITY
         )
@@ -362,7 +394,9 @@ class TestNipalsPLSJax:
         ):
             np.testing.assert_allclose(scores_jax, scores_np, **PARITY)
 
-    @pytest.mark.parametrize("data", ["sample_xy_data", "sample_xy_data_with_nan"])
+    @pytest.mark.parametrize(
+        "data", ["sample_xy_data", "sample_xy_data_with_nan"]
+    )
     def test_set_components(self, data, request):
         X, Y = request.getfixturevalue(data)
 
@@ -371,7 +405,10 @@ class TestNipalsPLSJax:
 
         for name in PLS_ATTRIBUTES:
             np.testing.assert_allclose(
-                getattr(pls_jax, name), getattr(pls_np, name), err_msg=name, **PARITY
+                getattr(pls_jax, name),
+                getattr(pls_np, name),
+                err_msg=name,
+                **PARITY,
             )
 
     def test_set_components_shrink_then_grow(self, sample_xy_data_with_nan):
@@ -386,7 +423,10 @@ class TestNipalsPLSJax:
 
         for name in PLS_ATTRIBUTES:
             np.testing.assert_allclose(
-                getattr(pls_jax, name), getattr(pls_ref, name), err_msg=name, **PARITY
+                getattr(pls_jax, name),
+                getattr(pls_ref, name),
+                err_msg=name,
+                **PARITY,
             )
 
     def test_reg_vector_after_nan_fit(self, sample_xy_data_with_nan):
@@ -414,9 +454,13 @@ class TestNipalsPLSJax:
         pls_jax = NipalsPLS_JAX(n_components=3).fit(X, Y)
 
         np.testing.assert_allclose(
-            pls_jax.calc_imd(input_array=X), pls_np.calc_imd(input_array=X), **PARITY
+            pls_jax.calc_imd(input_array=X),
+            pls_np.calc_imd(input_array=X),
+            **PARITY,
         )
-        np.testing.assert_allclose(pls_jax.calc_oomd(X), pls_np.calc_oomd(X), **PARITY)
+        np.testing.assert_allclose(
+            pls_jax.calc_oomd(X), pls_np.calc_oomd(X), **PARITY
+        )
 
     def test_all_nan_y_row_is_dropped(self, sample_xy_data):
         X, Y = sample_xy_data
@@ -436,7 +480,9 @@ class TestNipalsPLSJax:
         pls_np = NipalsPLS(n_components=3).fit(X, Y)
         pls_jax = NipalsPLS_JAX(n_components=3, dtype="float32").fit(X, Y)
 
-        np.testing.assert_allclose(pls_jax.predict(X), pls_np.predict(X), atol=1e-2)
+        np.testing.assert_allclose(
+            pls_jax.predict(X), pls_np.predict(X), atol=1e-2
+        )
 
 
 @pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
@@ -454,3 +500,54 @@ class TestJAXDevices:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+class TestFloat32HotellingT2:
+    """A low-variance but real component must stay in T2 in float32."""
+
+    @pytest.mark.parametrize("covariance", ["diag", "full", "ledoit_wolf"])
+    def test_small_component_kept(self, covariance):
+        rng = np.random.default_rng(42)
+        X = rng.normal(size=(100, 1)) + 1e-3 * rng.normal(size=(100, 8))
+        X = X - X.mean(axis=0)
+
+        pca_np = NipalsPCA(n_components=2).fit(X)
+        jax.config.update("jax_enable_x64", False)
+        try:
+            pca_jax = NipalsPCA_JAX(n_components=2).fit(X)
+            sd = np.std(pca_jax.fit_scores[:, 1], ddof=1)
+            probe = np.array([[0.0, 10 * sd]])
+            t2_jax = pca_jax.calc_imd(
+                input_scores=probe, covariance=covariance
+            )
+        finally:
+            jax.config.update("jax_enable_x64", True)
+        t2_np = pca_np.calc_imd(
+            input_scores=np.array([[0.0, 10 * sd]]), covariance=covariance
+        )
+
+        # Ledoit-Wolf shrinks the tiny variance by design; the others
+        # must see the point 10 standard deviations out
+        if covariance != "ledoit_wolf":
+            assert float(t2_jax[0, 0]) > 50
+        np.testing.assert_allclose(t2_jax, t2_np, rtol=1e-2)
+
+    def test_pls_small_component_kept(self):
+        rng = np.random.default_rng(42)
+        X = rng.normal(size=(100, 1)) + 1e-3 * rng.normal(size=(100, 8))
+        X = X - X.mean(axis=0)
+        Y = X[:, :2] + 1e-3 * rng.normal(size=(100, 2))
+        Y = Y - Y.mean(axis=0)
+
+        jax.config.update("jax_enable_x64", False)
+        try:
+            pls_jax = NipalsPLS_JAX(n_components=2).fit(X, Y)
+            sd = np.std(pls_jax.fit_scores_x[:, 1], ddof=1)
+            t2 = pls_jax.calc_imd(
+                input_scores=np.array([[0.0, 10 * sd]]), covariance="full"
+            )
+        finally:
+            jax.config.update("jax_enable_x64", True)
+
+        assert float(np.asarray(t2)[0, 0]) > 50
