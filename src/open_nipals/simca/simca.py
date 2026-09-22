@@ -113,8 +113,9 @@ class SIMCAClass:
         Boolean mask of the features that vary within the class. Only
         they count as degrees of freedom for DModX.
     s0 : float
-        Pooled residual standard deviation of the class training data.
-        The absolute DModX of new samples is divided by it.
+        Pooled residual standard deviation per degree of freedom of the
+        class training data, over rows with at least one residual degree
+        of freedom. The absolute DModX of new samples is divided by it.
     r2_cumulative : np.ndarray
         Cumulative R² values per component, against the class-centred
         training variation.
@@ -712,18 +713,20 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             pca = self._create_pca_model(n_comp)
             pca.fit(X_centered)
 
-            # Pooled residual standard deviation of the training class,
-            # the scale that makes DModX dimensionless. The degrees of
-            # freedom generalise (n - A - 1)(K - A) to rows with missing
-            # values, K counting the observed varying features per row.
+            # Pooled residual standard deviation per degree of freedom of
+            # the training class, the scale that makes DModX
+            # dimensionless. Each row has (observed varying features - A)
+            # degrees of freedom; rows with none (too sparse for this A)
+            # cannot contribute a residual estimate and are left out.
             varying = _varying_mask(X_class)
             sse, n_observed = _residual_sums(pca, X_centered, varying)
-            dof = (
-                (n_samples_class - n_comp - 1)
-                / n_samples_class
-                * np.sum(n_observed - n_comp)
+            usable = n_observed - n_comp >= 1
+            dof = float(np.sum(n_observed[usable] - n_comp))
+            s0 = (
+                float(np.sqrt(np.sum(sse[usable]) / dof))
+                if dof > 0
+                else np.nan
             )
-            s0 = float(np.sqrt(np.sum(sse) / dof)) if dof > 0 else np.nan
 
             # Calculate limits
             t2_limit = float(
@@ -784,17 +787,16 @@ class SIMCA(ClassifierMixin, BaseEstimator):
 
         t2 = np.asarray(pca.calc_imd(input_array=X_centered)).ravel()
 
-        # DModX of a row: residual standard deviation over its observed
-        # varying features, with SIMCA-P's n / (n - A - 1) correction for
-        # new observations, relative to the training residual scale s0.
-        # Rows with no residual degree of freedom cannot be judged and
-        # are infinitely far (rejected).
-        n = model.n_samples
+        # DModX of a row: residual standard deviation per degree of
+        # freedom over its observed varying features, relative to the
+        # pooled training value s0. (SIMCA-P's n / (n - A - 1) factor
+        # multiplies both and cancels.) Rows with no residual degree of
+        # freedom cannot be judged and are infinitely far (rejected).
         n_comp = model.n_components
         sse, n_observed = _residual_sums(pca, X_centered, model.varying)
         dof = n_observed - n_comp
         with np.errstate(divide="ignore", invalid="ignore"):
-            dmodx = np.sqrt(sse / dof * n / (n - n_comp - 1))
+            dmodx = np.sqrt(sse / dof)
         dmodx = np.where(dof >= 1, dmodx, np.inf)
 
         return t2, dmodx / model.s0

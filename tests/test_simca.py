@@ -1130,3 +1130,32 @@ class TestSIMCAReviewRound8:
 
         own = model.get_distances(X)["dmodx"][:, 0]
         assert 0.8 < np.mean(own**2) < 1.2
+
+
+class TestSIMCAReviewRound9:
+    """Finding of the ninth adversarial review."""
+
+    @pytest.mark.parametrize("n_sparse", [179, 400])
+    def test_sparse_training_rows_do_not_inflate_s0(self, n_sparse):
+        """Rows observing fewer features than components carry no dof."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(60, 5))
+        y = np.zeros(60, dtype=int)
+        reference = SIMCA(
+            n_components=2, scale=False, unknown_handling="reject"
+        ).fit(X, y)
+
+        sparse = np.full((n_sparse, 5), np.nan)
+        sparse[np.arange(n_sparse), rng.integers(0, 5, n_sparse)] = rng.normal(
+            size=n_sparse
+        )
+        model = SIMCA(
+            n_components=2, scale=False, unknown_handling="reject"
+        ).fit(np.vstack([X, sparse]), np.zeros(60 + n_sparse, dtype=int))
+
+        assert model.class_models_[0].s0 == pytest.approx(
+            reference.class_models_[0].s0, rel=0.3
+        )
+        outlier = np.full((1, 5), 6.0) * np.array([1, -1, 1, -1, 1])
+        assert reference.predict(outlier)[0] is None
+        assert model.predict(outlier)[0] is None
