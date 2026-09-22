@@ -499,8 +499,8 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         # For Y-scores (no weights provided), use loadings which are unit
         # normalized, so use_denom=True (divides by 1).
         # For X-scores (weights provided), behavior depends on NaN presence:
-        # - Non-NaN data: use_denom=False (weights are scaled by p_weight during fit)
-        # - NaN data: use_denom=True (fitting uses this with scaled weights)
+        # - Non-NaN data: use_denom=False, matching the fitting loop
+        # - NaN data: use_denom=True, matching the fitting loop
         if weights is None:
             weights = loadings.copy()
             use_denom = True  # Y-loadings are unit normalized
