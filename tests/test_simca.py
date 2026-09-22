@@ -1289,3 +1289,42 @@ class TestSIMCAReviewRound13:
         distances = model.get_distances(X)
         assert np.all(np.isfinite(distances["t2"]))
         assert np.all(np.isfinite(distances["dmodx"]))
+
+
+class TestSIMCAReviewRound14:
+    """Finding of the fourteenth adversarial review."""
+
+    @staticmethod
+    def _duplicated_channels():
+        return np.repeat(
+            np.tile(
+                [[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]], (14, 1)
+            ),
+            4,
+            axis=1,
+        )
+
+    @pytest.mark.parametrize("selection", ["r2", "q2", "eigenvalue"])
+    def test_rank_is_checked_after_row_filtering(self, selection):
+        X = self._duplicated_channels()
+        sparse = np.full((20, 8), np.nan)
+        corners = np.tile(
+            [[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]], (5, 1)
+        )
+        sparse[:, 0], sparse[:, 4] = corners[:, 0], corners[:, 1]
+        X_all = np.vstack([X, sparse])
+
+        model = SIMCA(n_components="auto", component_selection=selection).fit(
+            X_all, np.zeros(76, dtype=int)
+        )
+
+        class_model = model.class_models_[0]
+        assert class_model.n_components == 1
+        scale = np.sqrt(np.mean(X**2))
+        assert class_model.s0 > 1e-6 * scale
+        assert np.all(np.isfinite(model.get_distances(X)["dmodx"]))
+
+    def test_explicit_count_without_residual_is_rejected(self):
+        X = self._duplicated_channels()
+        with pytest.raises(ValueError, match="no residual variation"):
+            SIMCA(n_components=2).fit(X, np.zeros(56, dtype=int))

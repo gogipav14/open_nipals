@@ -527,10 +527,13 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         n_samples = int(np.sum(keep))
         if n_samples == 0:
             return False
-        n_features = _n_varying(X_class[keep])
+        X_kept = X_class[keep]
+        n_features = _n_varying(X_kept)
         return (
             n_samples - n_comp - 1 >= 1
             and n_features - n_comp >= 1
+            # the kept rows must still have variation beyond n_comp
+            and n_comp <= _numerical_rank(X_kept) - 1
             and self._limit_is_usable(n_samples, n_features, n_comp)
         )
 
@@ -828,6 +831,15 @@ class SIMCA(ClassifierMixin, BaseEstimator):
                 if dof > 0
                 else np.nan
             )
+            # A residual at rounding level means the components used up
+            # all the variation: DModX would measure numerical noise
+            data_scale = float(np.sqrt(np.nanmean(X_centered**2)))
+            if np.isfinite(s0) and s0 <= 1e-8 * data_scale:
+                raise ValueError(
+                    f"Class {class_label!r}: n_components={n_comp} leaves "
+                    "no residual variation (the class data has rank "
+                    f"<= {n_comp}). Use fewer components."
+                )
 
             # Calculate limits
             t2_limit = float(
