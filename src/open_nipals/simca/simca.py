@@ -709,6 +709,36 @@ class SIMCA(ClassifierMixin, BaseEstimator):
                 n_comp, n_samples_class, n_varying, class_label
             )
 
+            # A row needs more observed varying features than components:
+            # otherwise its scores are underdetermined and it has no
+            # residual, yet it would count in the T2 score variances, the
+            # sample count of the limits and s0. Drop such rows and
+            # re-estimate the class statistics without them.
+            varying = _varying_mask(X_class)
+            n_observed = np.sum(~np.isnan(X_class[:, varying]), axis=1)
+            determined = n_observed >= n_comp + 1
+            if not np.all(determined):
+                warnings.warn(
+                    f"Class {class_label!r}: dropping "
+                    f"{int(np.sum(~determined))} training rows with fewer "
+                    f"than {n_comp + 1} observed varying features, too "
+                    f"few for {n_comp} components."
+                )
+                X_class = X_class[determined]
+                n_samples_class = X_class.shape[0]
+                if n_samples_class == 0:
+                    raise ValueError(
+                        f"Class {class_label!r}: no training row has "
+                        f"{n_comp + 1} observed varying features."
+                    )
+                n_varying = _n_varying(X_class)
+                class_mean, class_std = _class_statistics(X_class, self.scale)
+                X_centered = (X_class - class_mean) / class_std
+
+            self._validate_n_components(
+                n_comp, n_samples_class, n_varying, class_label
+            )
+
             # Fit PCA model on the centred class data
             pca = self._create_pca_model(n_comp)
             pca.fit(X_centered)

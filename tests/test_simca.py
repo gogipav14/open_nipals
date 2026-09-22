@@ -1159,3 +1159,36 @@ class TestSIMCAReviewRound9:
         outlier = np.full((1, 5), 6.0) * np.array([1, -1, 1, -1, 1])
         assert reference.predict(outlier)[0] is None
         assert model.predict(outlier)[0] is None
+
+
+class TestSIMCAReviewRound10:
+    """Finding of the tenth adversarial review."""
+
+    def test_sparse_training_rows_do_not_inflate_t2(self):
+        rng = np.random.default_rng(1)
+        X = rng.normal(size=(60, 5))
+        y = np.zeros(60, dtype=int)
+        reference = SIMCA(n_components=2, unknown_handling="reject").fit(X, y)
+
+        sparse = np.full((179, 5), np.nan)
+        sparse[np.arange(179), rng.integers(0, 5, 179)] = rng.normal(size=179)
+        with pytest.warns(UserWarning, match="dropping 179"):
+            model = SIMCA(n_components=2, unknown_handling="reject").fit(
+                np.vstack([X, sparse]), np.zeros(239, dtype=int)
+            )
+
+        ref_class = reference.class_models_[0]
+        new_class = model.class_models_[0]
+        assert new_class.n_samples == 60
+        assert new_class.t2_limit == pytest.approx(ref_class.t2_limit)
+        np.testing.assert_allclose(
+            np.var(new_class.pca_model.fit_scores, axis=0),
+            np.var(ref_class.pca_model.fit_scores, axis=0),
+            rtol=1e-6,
+        )
+
+        # A sample far out along the first component of the model plane
+        p1 = ref_class.pca_model.loadings[:, 0]
+        outlier = ref_class.class_mean + 8 * ref_class.class_std * p1
+        assert reference.predict(outlier[None])[0] is None
+        assert model.predict(outlier[None])[0] is None
