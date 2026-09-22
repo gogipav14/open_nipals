@@ -11,13 +11,13 @@ open_nipals at commit `686977a`.
 
 > **Rerun after commit 45335be (per-class autoscaling, core DModX limit).**
 > The sections below were written against commit 686977a, where
->  used one global . That design was
+> `SIMCA(scale=True)` used one global `StandardScaler`. That design was
 > replaced by per-class autoscaling (each class centred and scaled by its
 > own calibration mean and sd, ddof=1, as SIMCA-P and mdatools do), and
-> the DModX limit is now  instead of
-> a separate  function. Parts A and B are unchanged (they
-> were already definition-matched). Part C's  column is now
-> identical to  in every cell, and the counts moved onto
+> the DModX limit is now `NipalsPCA.calc_limit(metric="DModX")` instead of
+> a separate `dmodx_limit()` function. Parts A and B are unchanged (they
+> were already definition-matched). Part C's `native` column is now
+> identical to `class_prescaled` in every cell, and the counts moved onto
 > mdatools' numbers, e.g. Wine class_0 calibration 27/30 (was 30/30) and
 > class_1 model on class_0 test rows 5/29 (was 8/29). Discrepancy 3 below
 > is therefore resolved. Regenerated tables:
@@ -377,9 +377,10 @@ explanation:
    (`ddmoments`/`jm`/`chisq`). mdatools' own three `lim.type`s disagree
    with each other by a similar margin. Not a bug.
 
-3. **Wine `class_0` calibration accepts 30/30 (100%) under
+3. **[Resolved by commit 45335be, see the note at the top.]**
+   Wine `class_0` calibration accepted 30/30 (100%) under the former
    `native_global` scaling, vs 27/30 under `class_prescaled` scaling and
-   27-28/30 in mdatools** (part C). Explained by the global-vs-per-class
+   27-28/30 in mdatools (part C). Explained by the global-vs-per-class
    `StandardScaler` difference documented in "Definitions used" above --
    real, reproducible behaviour of open_nipals' documented scaling design,
    not a bug. Minimal reproduction:
