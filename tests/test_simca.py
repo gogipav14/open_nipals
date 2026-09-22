@@ -820,3 +820,73 @@ class TestSIMCAReviewRound3:
         class_model = model.class_models_[0]
         assert class_model.n_components <= model._max_components(20, 10)
         assert np.isfinite(class_model.dmodx_limit)
+
+
+class TestSIMCAReviewRound4:
+    """Findings of the fourth adversarial review."""
+
+    def test_eigenvalue_selection_uses_total_variance(self):
+        """A truncated fit must not inflate the retained eigenvalues.
+
+        Correlation spectrum 2.0, 0.8 x 5: only one eigenvalue is above
+        the Kaiser threshold, whatever the number of fitted components.
+        Normalising by the fitted variance only (3 components, 3.6 in
+        total) would put 0.8 at 0.8 * 6 / 3.6 = 1.33 and select 3.
+        """
+        rng = np.random.default_rng(0)
+        eigenvalues = np.array([2.0, 0.8, 0.8, 0.8, 0.8, 0.8])
+        n_samples = 500
+        # Orthonormal, zero-mean score columns give the exact spectrum
+        centred = rng.normal(size=(n_samples, 6))
+        centred -= centred.mean(axis=0)
+        scores, _ = np.linalg.qr(centred)
+        basis, _ = np.linalg.qr(rng.normal(size=(6, 6)))
+        X = scores * np.sqrt((n_samples - 1) * eigenvalues) @ basis.T
+
+        pca = NipalsPCA(n_components=3).fit(X)
+
+        assert ComponentSelector.select_by_eigenvalue(pca, X) == 1
+
+    @pytest.mark.parametrize("helper", ["pca", "pls"])
+    def test_cross_val_predict_integer_input(self, helper):
+        """Integer inputs must give the same predictions as floats."""
+        from open_nipals.simca.cross_validation import (
+            cross_val_predict_pca,
+            cross_val_predict_pls,
+        )
+        from open_nipals.nipalsPLS import NipalsPLS
+
+        rng = np.random.default_rng(0)
+        X_int = rng.integers(-5, 6, size=(40, 5))
+        y_int = rng.integers(-5, 6, size=(40, 2))
+        cv = KFoldCV(n_splits=4)
+
+        if helper == "pca":
+            pred_int = cross_val_predict_pca(NipalsPCA, X_int, 2, cv)
+            pred_float = cross_val_predict_pca(
+                NipalsPCA, X_int.astype(float), 2, cv
+            )
+            np.testing.assert_allclose(pred_int, pred_float)
+        else:
+            pred_int = cross_val_predict_pls(NipalsPLS, X_int, y_int, 2, cv)
+            pred_float = cross_val_predict_pls(
+                NipalsPLS, X_int.astype(float), y_int.astype(float), 2, cv
+            )
+            for a, b in zip(pred_int, pred_float):
+                np.testing.assert_allclose(a, b)
+
+    def test_predict_keeps_label_dtype(self, two_class_data):
+        """Plain labels come back with their own dtype, usable by sklearn."""
+        from sklearn.metrics import accuracy_score
+
+        X, y = two_class_data
+        model = SIMCA(n_components=2).fit(X, y)
+
+        predictions = model.predict(X)
+        assert predictions.dtype == np.asarray(y).dtype
+        assert accuracy_score(y, predictions) > 0.8
+
+        # Rejections still need an object array to hold None
+        rejecting = SIMCA(n_components=2, unknown_handling="reject").fit(X, y)
+        far_away = np.full((2, X.shape[1]), 1e3)
+        assert rejecting.predict(far_away).dtype == object

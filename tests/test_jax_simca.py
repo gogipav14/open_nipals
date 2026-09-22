@@ -441,3 +441,29 @@ class TestJAXSIMCAReviewRound3:
             n_components="auto", component_selection="r2", r2_threshold=1.0
         ).fit(X, y)
         assert np.isfinite(model.class_models_[0].dmodx_limit)
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+class TestJAXSIMCAReviewRound4:
+    """The JAX helpers inherit the fourth-review fixes."""
+
+    def test_cross_val_predict_integer_input(self):
+        from open_nipals.jax.simca.cross_validation import (
+            cross_val_predict_pca,
+        )
+        from open_nipals.jax import NipalsPCA as NipalsPCA_JAX
+
+        rng = np.random.default_rng(0)
+        X_int = rng.integers(-5, 6, size=(40, 5))
+        cv = KFoldCV(n_splits=4)
+
+        pred_int = cross_val_predict_pca(NipalsPCA_JAX, X_int, 2, cv)
+        pred_float = cross_val_predict_pca(
+            NipalsPCA_JAX, X_int.astype(float), 2, cv
+        )
+        np.testing.assert_allclose(pred_int, pred_float)
+
+    def test_predict_keeps_label_dtype(self, two_class_data):
+        X, y = two_class_data
+        model = SIMCA_JAX(n_components=2).fit(X, y)
+        assert model.predict(X).dtype == np.asarray(y).dtype

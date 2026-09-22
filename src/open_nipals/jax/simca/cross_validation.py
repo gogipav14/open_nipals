@@ -44,7 +44,8 @@ def cross_val_predict_pca(
         Cross-validated X reconstructions.
     """
     n_samples, n_features = X.shape
-    X_pred = np.zeros_like(X)
+    # float buffers: integer inputs must not truncate the predictions
+    X_pred = np.zeros(X.shape, dtype=float)
 
     for train_idx, test_idx in cv.split(X):
         X_train = X[train_idx]
@@ -103,8 +104,9 @@ def cross_val_predict_pls(
     n_samples, n_features_x = X.shape
     n_targets = y.shape[1]
 
-    X_pred = np.zeros_like(X)
-    y_pred = np.zeros_like(y)
+    # float buffers: integer inputs must not truncate the predictions
+    X_pred = np.zeros(X.shape, dtype=float)
+    y_pred = np.zeros(y.shape, dtype=float)
 
     for train_idx, test_idx in cv.split(X):
         X_train, X_test = X[train_idx], X[test_idx]

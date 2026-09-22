@@ -207,13 +207,17 @@ class ComponentSelector:
         int
             Number of components with eigenvalue > threshold.
         """
-        # Eigenvalues are proportional to variance of scores
+        # Eigenvalues are the variances of the scores. They are put on
+        # the correlation-matrix scale (sum of all eigenvalues equals
+        # the number of features) using the total variance of X, not
+        # the variance of the fitted components only: SIMCA fits a
+        # truncated spectrum and that would inflate every eigenvalue.
         scores = np.asarray(pca_model.fit_scores)
         variances = np.var(scores, axis=0, ddof=1)
 
-        # Normalize by number of variables (like correlation matrix)
         n_features = X.shape[1]
-        eigenvalues = variances * n_features / np.sum(variances)
+        total_variance = np.nansum(np.nanvar(X, axis=0, ddof=1))
+        eigenvalues = variances * n_features / total_variance
 
         n_above = int(np.sum(eigenvalues > threshold))
         return max(1, n_above)  # At least 1 component
@@ -850,7 +854,10 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 closest_idx = int(np.argmin(finite_distances[i]))
                 predictions.append(self.classes_[closest_idx])
 
-        return np.array(predictions, dtype=object)
+        if any(p is None for p in predictions):
+            # None marks rejected samples, so the array must be object
+            return np.array(predictions, dtype=object)
+        return np.array(predictions, dtype=self.classes_.dtype)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
