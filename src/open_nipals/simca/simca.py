@@ -791,10 +791,14 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         dof = float(np.sum(n_observed[usable] - n_comp))
         s0 = float(np.sqrt(np.sum(sse[usable]) / dof)) if dof > 0 else np.nan
         # A residual at rounding level means the components used up
-        # all the variation: DModX would measure numerical noise
+        # all the variation: DModX would measure numerical noise. NIPALS
+        # can also run out of variation mid-fit and return NaN loadings.
         data_scale = float(np.sqrt(np.nanmean(X_centered**2)))
         tolerance = np.sqrt(self._compute_eps())
-        if np.isfinite(s0) and s0 <= tolerance * data_scale:
+        fit_failed = not (
+            np.all(np.isfinite(np.asarray(pca.loadings))) and np.isfinite(s0)
+        )
+        if fit_failed or s0 <= tolerance * data_scale:
             raise _ResidualExhausted(
                 f"Class {class_label!r}: n_components={n_comp} leaves "
                 "no residual variation (the class data has rank "

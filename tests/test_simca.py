@@ -1347,3 +1347,41 @@ class TestSIMCAReviewRound15:
         class_model = model.class_models_[0]
         assert class_model.n_components == 1
         assert np.all(np.isfinite(model.get_distances(X)["dmodx"]))
+
+
+class TestSIMCAReviewRound16:
+    """Finding of the sixteenth adversarial review."""
+
+    @pytest.mark.parametrize("selection", ["r2", "q2", "eigenvalue"])
+    def test_auto_falls_back_when_nipals_runs_out_of_variation(
+        self, selection
+    ):
+        rng = np.random.default_rng(0)
+        X = TestSIMCAReviewRound14._duplicated_channels().copy()
+        for row in range(0, 56, 4):
+            X[row, rng.integers(0, 8)] = np.nan
+        sparse = np.full((40, 8), np.nan)
+        for row in sparse:
+            row[rng.choice(8, size=3, replace=False)] = rng.choice(
+                [-1.0, 1.0], 3
+            )
+        X_all = np.vstack([X, sparse])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = SIMCA(
+                n_components="auto", component_selection=selection
+            ).fit(X_all, np.zeros(96, dtype=int))
+
+        class_model = model.class_models_[0]
+        assert 1 <= class_model.n_components <= 2
+        assert np.isfinite(class_model.s0) and class_model.s0 > 1e-6
+        assert np.all(np.isfinite(class_model.pca_model.loadings))
+        full_rows = ~np.isnan(X).any(axis=1)
+        distances = model.get_distances(X[full_rows])
+        assert np.all(np.isfinite(distances["dmodx"]))
+
+    def test_explicit_unsupported_count_still_raises(self):
+        X = TestSIMCAReviewRound14._duplicated_channels()
+        with pytest.raises(ValueError, match="no residual variation"):
+            SIMCA(n_components=3).fit(X, np.zeros(56, dtype=int))
