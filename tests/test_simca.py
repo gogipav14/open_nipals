@@ -723,6 +723,36 @@ class TestSIMCAReviewRound3:
         X[:, 0] = np.arange(10)
         np.testing.assert_array_equal(_class_std(X)[1:], 1.0)
 
+    def test_autoscaling_is_unit_invariant(self, two_class_data):
+        """Rescaling a feature (even by 1e-14) must not change predictions."""
+        X, y = two_class_data
+        X_small = X.copy()
+        X_small[:, 0] *= 1e-14
+
+        base = SIMCA(n_components=2, scale=True).fit(X, y)
+        small = SIMCA(n_components=2, scale=True).fit(X_small, y)
+
+        np.testing.assert_allclose(
+            small.get_distances(X_small)["dmodx"],
+            base.get_distances(X)["dmodx"],
+            rtol=1e-6,
+        )
+        assert list(small.predict(X_small)) == list(base.predict(X))
+
+    def test_rejected_refit_keeps_previous_model(self, two_class_data):
+        X, y = two_class_data
+        model = SIMCA(n_components=2).fit(X, y)
+
+        with pytest.raises(ValueError):
+            model.fit(X[:, 0], y)  # 1-D input is rejected
+
+        assert model.n_features_in_ == X.shape[1]
+        with pytest.raises(ValueError, match="features"):
+            model.predict(X[:, :1])
+        assert list(model.predict(X)) == list(
+            SIMCA(n_components=2).fit(X, y).predict(X)
+        )
+
     def test_wrong_feature_count_is_rejected(self, two_class_data):
         X, y = two_class_data
         model = SIMCA(n_components=2).fit(X, y)

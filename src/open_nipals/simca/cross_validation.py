@@ -6,6 +6,7 @@ for both PCA and PLS models.
 """
 
 import numpy as np
+import warnings
 from typing import Iterator, Tuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -192,16 +193,17 @@ def _class_std(X: np.ndarray) -> np.ndarray:
     """
     Column standard deviations (ddof=1), constant columns give 1.
 
-    A column is constant when its range is zero up to rounding; the
-    standard deviation of a column of identical decimals such as 0.1 is
-    not exactly zero, and dividing by that would turn rounding noise
-    into a full-variance feature.
+    A column is constant when all its observed values are identical.
+    The standard deviation of a column of identical decimals such as
+    0.1 is ~1e-17 rather than 0 (rounding in the mean), and dividing by
+    that would turn the rounding noise into a full-variance feature.
+    Any genuine variation, however small in absolute terms, is kept.
     """
     std = np.nanstd(X, axis=0, ddof=1)
-    with np.errstate(invalid="ignore"):
-        span = np.nanmax(X, axis=0) - np.nanmin(X, axis=0)
-        magnitude = np.maximum(np.nanmax(np.abs(X), axis=0), 1.0)
-    constant = ~(span > 1e-12 * magnitude)
+    with warnings.catch_warnings():
+        # all-NaN columns are constant too, no need for the warning
+        warnings.simplefilter("ignore", RuntimeWarning)
+        constant = np.nanmax(X, axis=0) == np.nanmin(X, axis=0)
     return np.where(constant, 1.0, std)
 
 

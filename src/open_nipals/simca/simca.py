@@ -300,7 +300,9 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         self.n_features_in_: Optional[int] = None
         self.class_models_: Dict[Any, SIMCAClass] = {}
 
-    def _prepare_input(self, X: np.ndarray) -> np.ndarray:
+    def _prepare_input(
+        self, X: np.ndarray, check_features: bool = True
+    ) -> np.ndarray:
         """
         Convert X to a 2-D float array in the original feature space.
 
@@ -310,6 +312,9 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         ----------
         X : np.ndarray
             Raw samples in the original feature space.
+        check_features : bool, default=True
+            Reject a feature count different from the fitted one. Off
+            during fit, which may legitimately change it.
 
         Returns
         -------
@@ -324,7 +329,8 @@ class SIMCA(BaseEstimator, ClassifierMixin):
             )
 
         if (
-            self.n_features_in_ is not None
+            check_features
+            and self.n_features_in_ is not None
             and X.shape[1] != self.n_features_in_
         ):
             raise ValueError(
@@ -596,17 +602,15 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 f"{self.n_components!r}."
             )
 
-        # Refitting may use a different feature count
-        self.n_features_in_ = None
-        X = self._prepare_input(X)
+        X = self._prepare_input(X, check_features=False)
 
-        # Get unique classes
-        self.classes_ = np.unique(y)
-        self.n_features_in_ = X.shape[1]
-        self.class_models_ = {}
+        # Fitted state is only replaced once every class model succeeded,
+        # a rejected refit leaves the previous model usable
+        classes = np.unique(y)
+        class_models = {}
 
         # Build PCA model for each class
-        for class_label in self.classes_:
+        for class_label in classes:
             mask = y == class_label
             X_class = X[mask]
             n_samples_class, n_features = X_class.shape
@@ -652,7 +656,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
             r2_cumulative = calc_r2_cumulative_pca(pca, X_centered)
 
             # Store class model
-            self.class_models_[class_label] = SIMCAClass(
+            class_models[class_label] = SIMCAClass(
                 label=class_label,
                 pca_model=pca,
                 n_components=n_comp,
@@ -664,6 +668,10 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 s0=s0,
                 r2_cumulative=r2_cumulative,
             )
+
+        self.classes_ = classes
+        self.class_models_ = class_models
+        self.n_features_in_ = X.shape[1]
 
         return self
 
