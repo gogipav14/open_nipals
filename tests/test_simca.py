@@ -1055,3 +1055,78 @@ def test_constant_columns_do_not_change_the_model():
             rtol=1e-8,
         )
         assert list(const.predict(X_const)) == list(base.predict(X))
+
+
+class TestSIMCAReviewRound8:
+    """Findings of the eighth adversarial review."""
+
+    @staticmethod
+    def _one_class(seed=42):
+        rng = np.random.default_rng(seed)
+        return rng.normal(size=(60, 5)), np.zeros(60, dtype=int)
+
+    @pytest.mark.parametrize(
+        "extra", [np.full((60, 10), 7.0), np.full((60, 10), np.nan)]
+    )
+    def test_uninformative_columns_change_nothing(self, extra):
+        """Constant or empty extra columns, with missing values in X."""
+        X, y = self._one_class()
+        rng = np.random.default_rng(1)
+        X_new = rng.normal(size=(30, 5)) * 1.5
+        X_new[rng.random(X_new.shape) < 0.3] = np.nan
+
+        base = SIMCA(n_components=2, scale=False).fit(X, y)
+        wide = SIMCA(n_components=2, scale=False).fit(np.hstack([X, extra]), y)
+        extra_new = extra[:30]
+
+        assert wide.class_models_[0].dmodx_limit == pytest.approx(
+            base.class_models_[0].dmodx_limit
+        )
+        for X_eval, X_eval_wide in (
+            (X, np.hstack([X, extra])),
+            (X_new, np.hstack([X_new, extra_new])),
+        ):
+            np.testing.assert_allclose(
+                wide.get_distances(X_eval_wide)["dmodx"],
+                base.get_distances(X_eval)["dmodx"],
+                rtol=1e-8,
+            )
+
+    def test_row_observed_only_in_constant_features_is_rejected(self):
+        X, y = self._one_class()
+        X_wide = np.hstack([X, np.full((60, 3), 7.0)])
+        model = SIMCA(
+            n_components=2, scale=False, unknown_handling="reject"
+        ).fit(X_wide, y)
+
+        row = np.full((1, 8), np.nan)
+        row[0, 5:] = 7.0
+
+        assert np.isinf(model.get_distances(row)["dmodx"][0, 0])
+        assert model.predict(row)[0] is None
+
+    def test_deviation_in_a_constant_feature_is_out_of_model(self):
+        X, y = self._one_class()
+        X_wide = np.hstack([X, np.full((60, 1), 7.0)])
+        model = SIMCA(
+            n_components=2, scale=False, unknown_handling="reject"
+        ).fit(X_wide, y)
+
+        typical = X_wide[:1].copy()
+        shifted = typical.copy()
+        shifted[0, 5] = 17.0
+
+        assert model.predict(typical)[0] == 0
+        assert model.predict(shifted)[0] is None
+
+    def test_training_dmodx_is_about_one(self):
+        """Missing values in training must not bias the residual scale."""
+        X, y = self._one_class()
+        rng = np.random.default_rng(3)
+        X = X.copy()
+        X[rng.random(X.shape) < 0.1] = np.nan
+
+        model = SIMCA(n_components=2, scale=False).fit(X, y)
+
+        own = model.get_distances(X)["dmodx"][:, 0]
+        assert 0.8 < np.mean(own**2) < 1.2

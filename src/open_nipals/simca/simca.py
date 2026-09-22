@@ -16,7 +16,7 @@ value from :meth:`~open_nipals.nipalsPCA.NipalsPCA.calc_limit`.
 import numpy as np
 import warnings
 from dataclasses import dataclass
-from typing import Optional, Union, List, Dict, Any, Literal
+from typing import Tuple, Optional, Union, List, Dict, Any, Literal
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.exceptions import NotFittedError
 
@@ -25,16 +25,42 @@ from .metrics import calc_r2_cumulative_pca, calc_q2_cumulative_pca
 from .cross_validation import KFoldCV, _class_statistics
 
 
-def _n_varying(X: np.ndarray) -> int:
-    """Number of columns whose observed values are not all identical.
+def _varying_mask(X: np.ndarray) -> np.ndarray:
+    """Columns with at least two different observed values.
 
-    Constant (and empty) columns have no variance to model, so they do
-    not count as features for component bounds and degrees of freedom.
+    Constant and entirely missing columns have no variance to model, so
+    they do not count as features for component bounds, degrees of
+    freedom or the informative-row test.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
+        observed = np.any(~np.isnan(X), axis=0)
         constant = np.nanmax(X, axis=0) == np.nanmin(X, axis=0)
-    return int(np.sum(~constant))
+    return observed & ~constant
+
+
+def _n_varying(X: np.ndarray) -> int:
+    """Number of columns selected by :func:`_varying_mask`."""
+    return int(np.sum(_varying_mask(X)))
+
+
+def _residual_sums(
+    pca: NipalsPCA, X_centered: np.ndarray, varying: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Per-row residual sum of squares and its feature count.
+
+    The sum runs over every observed feature, so a sample that deviates
+    in a feature that was constant in training is still out of model.
+    The count is the number of observed *varying* features, the degrees
+    of freedom those residuals are spread over.
+    """
+    scores = np.asarray(pca.transform(X_centered))
+    residuals = X_centered - np.asarray(pca.inverse_transform(scores))
+    observed = ~np.isnan(X_centered)
+    sse = np.sum(np.where(observed, residuals, 0.0) ** 2, axis=1)
+    n_observed = np.sum(observed & varying, axis=1)
+    return sse, n_observed
 
 
 def _informative_rows(X_class: np.ndarray, class_label: Any) -> np.ndarray:
@@ -47,10 +73,7 @@ def _informative_rows(X_class: np.ndarray, class_label: Any) -> np.ndarray:
     zero after centring and add nothing to the model, but would still
     count as samples in the limits and the residual scale s0.
     """
-    with warnings.catch_warnings():
-        # all-NaN columns count as constant, no need for the warning
-        warnings.simplefilter("ignore", RuntimeWarning)
-        varying = ~(np.nanmax(X_class, axis=0) == np.nanmin(X_class, axis=0))
+    varying = _varying_mask(X_class)
     informative = np.any(~np.isnan(X_class[:, varying]), axis=1)
     n_dropped = int(np.sum(~informative))
     if n_dropped:
@@ -86,6 +109,9 @@ class SIMCAClass:
         Standard deviation (ddof=1) of the class training data, all ones
         when the model was fitted with ``scale=False``. The centred data
         is divided by it before the PCA model is applied.
+    varying : np.ndarray
+        Boolean mask of the features that vary within the class. Only
+        they count as degrees of freedom for DModX.
     s0 : float
         Pooled residual standard deviation of the class training data.
         The absolute DModX of new samples is divided by it.
@@ -102,6 +128,7 @@ class SIMCAClass:
     n_samples: int
     class_mean: np.ndarray
     class_std: np.ndarray
+    varying: np.ndarray
     s0: float
     r2_cumulative: Optional[np.ndarray] = None
 
@@ -686,12 +713,17 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             pca.fit(X_centered)
 
             # Pooled residual standard deviation of the training class,
-            # the scale that makes DModX dimensionless
-            scores = np.asarray(pca.transform(X_centered))
-            residuals = X_centered - np.asarray(pca.inverse_transform(scores))
-            # All features here, as in calc_oomd, so K cancels in DModX/s0
-            dof = (n_samples_class - n_comp - 1) * (n_features - n_comp)
-            s0 = float(np.sqrt(np.nansum(residuals**2) / dof))
+            # the scale that makes DModX dimensionless. The degrees of
+            # freedom generalise (n - A - 1)(K - A) to rows with missing
+            # values, K counting the observed varying features per row.
+            varying = _varying_mask(X_class)
+            sse, n_observed = _residual_sums(pca, X_centered, varying)
+            dof = (
+                (n_samples_class - n_comp - 1)
+                / n_samples_class
+                * np.sum(n_observed - n_comp)
+            )
+            s0 = float(np.sqrt(np.sum(sse) / dof)) if dof > 0 else np.nan
 
             # Calculate limits
             t2_limit = float(
@@ -715,6 +747,7 @@ class SIMCA(ClassifierMixin, BaseEstimator):
                 n_samples=n_samples_class,
                 class_mean=class_mean,
                 class_std=class_std,
+                varying=varying,
                 s0=s0,
                 r2_cumulative=r2_cumulative,
             )
@@ -750,7 +783,19 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         X_centered = self._to_class_space(X, model)
 
         t2 = np.asarray(pca.calc_imd(input_array=X_centered)).ravel()
-        dmodx = np.asarray(pca.calc_oomd(X_centered, metric="DModX")).ravel()
+
+        # DModX of a row: residual standard deviation over its observed
+        # varying features, with SIMCA-P's n / (n - A - 1) correction for
+        # new observations, relative to the training residual scale s0.
+        # Rows with no residual degree of freedom cannot be judged and
+        # are infinitely far (rejected).
+        n = model.n_samples
+        n_comp = model.n_components
+        sse, n_observed = _residual_sums(pca, X_centered, model.varying)
+        dof = n_observed - n_comp
+        with np.errstate(divide="ignore", invalid="ignore"):
+            dmodx = np.sqrt(sse / dof * n / (n - n_comp - 1))
+        dmodx = np.where(dof >= 1, dmodx, np.inf)
 
         return t2, dmodx / model.s0
 
