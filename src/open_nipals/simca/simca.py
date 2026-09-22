@@ -297,6 +297,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         self.tol_criteria = tol_criteria
 
         self.classes_ = None
+        self.n_features_in_: Optional[int] = None
         self.class_models_: Dict[Any, SIMCAClass] = {}
 
     def _prepare_input(self, X: np.ndarray) -> np.ndarray:
@@ -320,6 +321,15 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         if X.ndim != 2:
             raise ValueError(
                 f"X must be a 2-D array, got {X.ndim} dimension(s)."
+            )
+
+        if (
+            self.n_features_in_ is not None
+            and X.shape[1] != self.n_features_in_
+        ):
+            raise ValueError(
+                f"X has {X.shape[1]} features, but this SIMCA model was "
+                f"fitted with {self.n_features_in_} features."
             )
 
         return X
@@ -357,7 +367,37 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         int
             Maximum usable number of components (may be < 1).
         """
-        return int(min(10, n_samples - 2, n_features - 1))
+        upper = int(min(10, n_samples - 2, n_features - 1))
+        # The DModX limit formula has its own domain, see _limit_is_usable
+        n_max = 0
+        for n_comp in range(1, upper + 1):
+            if not self._limit_is_usable(n_samples, n_features, n_comp):
+                break
+            n_max = n_comp
+        return n_max
+
+    def _limit_is_usable(
+        self, n_samples: int, n_features: int, n_components: int
+    ) -> bool:
+        """
+        Whether the core DModX limit exists for these dimensions.
+
+        NipalsPCA.calc_limit(metric="DModX") follows the SIMCA-P help
+        formula, whose observation degrees of freedom drop below 1 (the
+        core code warns) and then turn negative (NaN limit) for component
+        counts close to the sample or feature count, even when
+        (n - A - 1)(K - A) is still positive. Both cases are rejected.
+        """
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            limit = self._pca_class().calc_limit(
+                metric="DModX",
+                n=n_samples,
+                num_lvs=n_components,
+                m=n_features,
+                alpha=self.alpha,
+            )
+        return not caught and bool(np.isfinite(limit)) and limit > 0
 
     def _validate_n_components(
         self,
@@ -410,6 +450,13 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 f"no residual degrees of freedom for {n_samples} samples. "
                 f"Use n_components <= {n_samples - 2} or collect more "
                 "samples for this class."
+            )
+        if not self._limit_is_usable(n_samples, n_features, n_components):
+            raise ValueError(
+                f"Class {class_label!r}: no DModX limit exists for "
+                f"n_components={n_components} with {n_samples} samples and "
+                f"{n_features} features. Use n_components <= "
+                f"{self._max_components(n_samples, n_features)}."
             )
 
     def _check_limits(
@@ -549,10 +596,13 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 f"{self.n_components!r}."
             )
 
+        # Refitting may use a different feature count
+        self.n_features_in_ = None
         X = self._prepare_input(X)
 
         # Get unique classes
         self.classes_ = np.unique(y)
+        self.n_features_in_ = X.shape[1]
         self.class_models_ = {}
 
         # Build PCA model for each class

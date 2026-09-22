@@ -407,3 +407,36 @@ class TestJAXPRESSFailedPredictions:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestJAXSIMCAReviewRound3:
+    """The JAX wrapper inherits the third-review fixes."""
+
+    def test_constant_decimal_column_is_not_scaled_up(self):
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(20, 4))
+        X[:, 1] = 0.1
+        y = np.array([0] * 10 + [1] * 10)
+
+        model = SIMCA_JAX(n_components=2, scale=True).fit(X, y)
+
+        for class_model in model.class_models_.values():
+            assert class_model.class_std[1] == 1.0
+            assert np.abs(class_model.pca_model.loadings[1, :]).max() < 1e-8
+
+    def test_wrong_feature_count_is_rejected(self, two_class_data):
+        X, y = two_class_data
+        model = SIMCA_JAX(n_components=2).fit(X, y)
+        with pytest.raises(ValueError, match="features"):
+            model.predict(X[:, :1])
+
+    def test_component_count_outside_limit_domain_is_rejected(self):
+        rng = np.random.default_rng(1)
+        X = rng.normal(size=(20, 10))
+        y = np.zeros(20, dtype=int)
+        with pytest.raises(ValueError, match="no DModX limit"):
+            SIMCA_JAX(n_components=8, scale=False).fit(X, y)
+        model = SIMCA_JAX(
+            n_components="auto", component_selection="r2", r2_threshold=1.0
+        ).fit(X, y)
+        assert np.isfinite(model.class_models_[0].dmodx_limit)

@@ -695,3 +695,78 @@ class TestSIMCAComponentValidation:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSIMCAReviewRound3:
+    """Findings of the third adversarial review."""
+
+    def test_constant_decimal_column_is_not_scaled_up(self):
+        """A column of identical 0.1 values must get scale 1, not ~1e-17."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(20, 4))
+        X[:, 1] = 0.1
+        y = np.array([0] * 10 + [1] * 10)
+
+        model = SIMCA(n_components=2, scale=True).fit(X, y)
+
+        for class_model in model.class_models_.values():
+            assert class_model.class_std[1] == 1.0
+            fit_data = np.asarray(class_model.pca_model.fit_data)
+            assert np.abs(fit_data[:, 1]).max() < 1e-12
+            assert np.abs(class_model.pca_model.loadings[1, :]).max() < 1e-8
+
+    def test_cv_constant_decimal_column(self):
+        """Same guard inside the cross-validation scaling."""
+        from open_nipals.simca.cross_validation import _class_std
+
+        X = np.full((10, 3), 0.1)
+        X[:, 0] = np.arange(10)
+        np.testing.assert_array_equal(_class_std(X)[1:], 1.0)
+
+    def test_wrong_feature_count_is_rejected(self, two_class_data):
+        X, y = two_class_data
+        model = SIMCA(n_components=2).fit(X, y)
+
+        for method in (
+            model.predict,
+            model.predict_proba,
+            model.get_class_membership,
+            model.get_distances,
+        ):
+            with pytest.raises(ValueError, match="features"):
+                method(X[:, :1])
+
+        # Refitting with another feature count is still allowed
+        model.fit(X[:, :4], y)
+        assert model.n_features_in_ == 4
+
+    def test_component_count_outside_limit_domain_is_rejected(self):
+        """calc_limit's DModX formula has no value for A close to n or K."""
+        rng = np.random.default_rng(1)
+        X = rng.normal(size=(20, 10))
+        y = np.zeros(20, dtype=int)
+
+        with pytest.raises(ValueError, match="no DModX limit"):
+            SIMCA(n_components=8, scale=False).fit(X, y)
+
+        max_comp = SIMCA(scale=False)._max_components(20, 10)
+        assert max_comp < 8
+        model = SIMCA(n_components=max_comp, scale=False).fit(X, y)
+        assert np.isfinite(model.class_models_[0].dmodx_limit)
+
+    @pytest.mark.parametrize("selection", ["r2", "q2", "eigenvalue"])
+    def test_auto_selection_stays_inside_limit_domain(self, selection):
+        rng = np.random.default_rng(1)
+        X = rng.normal(size=(20, 10))
+        y = np.zeros(20, dtype=int)
+
+        model = SIMCA(
+            n_components="auto",
+            component_selection=selection,
+            r2_threshold=1.0,
+            scale=False,
+        ).fit(X, y)
+
+        class_model = model.class_models_[0]
+        assert class_model.n_components <= model._max_components(20, 10)
+        assert np.isfinite(class_model.dmodx_limit)
