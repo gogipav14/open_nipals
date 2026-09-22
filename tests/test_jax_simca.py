@@ -415,7 +415,7 @@ class TestJAXSIMCAReviewRound3:
 
     def test_constant_decimal_column_is_not_scaled_up(self):
         rng = np.random.default_rng(0)
-        X = rng.normal(size=(20, 4))
+        X = rng.normal(size=(20, 6))
         X[:, 1] = 0.1
         y = np.array([0] * 10 + [1] * 10)
 
@@ -516,7 +516,7 @@ class TestJAXSIMCAReviewRound6:
         rng = np.random.default_rng(0)
         X = rng.normal(size=(40, 5))
         X_padded = np.vstack([X, np.full((10, 5), np.nan)])
-        with pytest.warns(UserWarning, match="Dropping 10"):
+        with pytest.warns(UserWarning, match="dropping 10"):
             model = SIMCA_JAX(n_components=2).fit(
                 X_padded, np.zeros(50, dtype=int)
             )

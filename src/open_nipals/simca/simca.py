@@ -25,6 +25,42 @@ from .metrics import calc_r2_cumulative_pca, calc_q2_cumulative_pca
 from .cross_validation import KFoldCV, _class_statistics
 
 
+def _n_varying(X: np.ndarray) -> int:
+    """Number of columns whose observed values are not all identical.
+
+    Constant (and empty) columns have no variance to model, so they do
+    not count as features for component bounds and degrees of freedom.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        constant = np.nanmax(X, axis=0) == np.nanmin(X, axis=0)
+    return int(np.sum(~constant))
+
+
+def _informative_rows(X_class: np.ndarray, class_label: Any) -> np.ndarray:
+    """
+    Drop training rows that carry no information for the class model.
+
+    A row carries information only if it has an observed value in a
+    feature that varies within the class. Rows that are entirely
+    missing, or observed only in class-constant features, become all
+    zero after centring and add nothing to the model, but would still
+    count as samples in the limits and the residual scale s0.
+    """
+    with warnings.catch_warnings():
+        # all-NaN columns count as constant, no need for the warning
+        warnings.simplefilter("ignore", RuntimeWarning)
+        varying = ~(np.nanmax(X_class, axis=0) == np.nanmin(X_class, axis=0))
+    informative = np.any(~np.isnan(X_class[:, varying]), axis=1)
+    n_dropped = int(np.sum(~informative))
+    if n_dropped:
+        warnings.warn(
+            f"Class {class_label!r}: dropping {n_dropped} training rows "
+            "without an observed value in any varying feature."
+        )
+    return X_class[informative]
+
+
 @dataclass
 class SIMCAClass:
     """Container for a single class model in SIMCA.
@@ -156,7 +192,8 @@ class ComponentSelector:
         ValueError
             If no component count leaves usable degrees of freedom.
         """
-        n_samples, n_features = X.shape
+        n_samples = X.shape[0]
+        n_features = _n_varying(X)
         cv = KFoldCV(n_splits=max(2, min(cv_folds, n_samples)))
         min_train = min(len(train) for train, _ in cv.split(X))
 
@@ -215,8 +252,13 @@ class ComponentSelector:
         scores = np.asarray(pca_model.fit_scores)
         variances = np.var(scores, axis=0, ddof=1)
 
-        n_features = X.shape[1]
-        total_variance = np.nansum(np.nanvar(X, axis=0, ddof=1))
+        # Constant and empty columns hold no variance and do not count
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            column_variance = np.nanvar(X, axis=0, ddof=1)
+        varying = np.nan_to_num(column_variance) > 0
+        n_features = int(np.sum(varying))
+        total_variance = np.sum(column_variance[varying])
         eigenvalues = variances * n_features / total_variance
 
         n_above = int(np.sum(eigenvalues > threshold))
@@ -528,7 +570,8 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             If the class is too small for any usable model, or if
             component_selection is unknown.
         """
-        n_samples, n_features = X_class.shape
+        n_samples = X_class.shape[0]
+        n_features = _n_varying(X_class)
         max_components = self._max_components(n_samples, n_features)
 
         if max_components < 1:
@@ -610,18 +653,6 @@ class SIMCA(ClassifierMixin, BaseEstimator):
 
         X = self._prepare_input(X, check_features=False)
 
-        # Rows without a single observed value carry no information but
-        # would still count as samples in the limits and s0
-        empty_rows = np.all(np.isnan(X), axis=1)
-        if np.any(empty_rows):
-            warnings.warn(
-                f"Dropping {int(empty_rows.sum())} training rows in which "
-                "every value is missing."
-            )
-            X, y = X[~empty_rows], y[~empty_rows]
-            if X.shape[0] == 0:
-                raise ValueError("Cannot fit SIMCA on zero samples")
-
         # Fitted state is only replaced once every class model succeeded,
         # a rejected refit leaves the previous model usable
         classes = np.unique(y)
@@ -630,8 +661,10 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         # Build PCA model for each class
         for class_label in classes:
             mask = y == class_label
-            X_class = X[mask]
+            X_class = _informative_rows(X[mask], class_label)
             n_samples_class, n_features = X_class.shape
+            # Degrees of freedom and limits count varying features only
+            n_varying = _n_varying(X_class)
 
             # Each class model describes the variation around its own
             # mean, in units of its own standard deviation if scale is set
@@ -645,7 +678,7 @@ class SIMCA(ClassifierMixin, BaseEstimator):
                 n_comp = self._select_components(X_centered)
 
             self._validate_n_components(
-                n_comp, n_samples_class, n_features, class_label
+                n_comp, n_samples_class, n_varying, class_label
             )
 
             # Fit PCA model on the centred class data
@@ -656,6 +689,7 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             # the scale that makes DModX dimensionless
             scores = np.asarray(pca.transform(X_centered))
             residuals = X_centered - np.asarray(pca.inverse_transform(scores))
+            # All features here, as in calc_oomd, so K cancels in DModX/s0
             dof = (n_samples_class - n_comp - 1) * (n_features - n_comp)
             s0 = float(np.sqrt(np.nansum(residuals**2) / dof))
 
@@ -663,7 +697,9 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             t2_limit = float(
                 pca.calc_limit(metric="HotellingT2", alpha=self.alpha)
             )
-            dmodx_lim = float(pca.calc_limit(metric="DModX", alpha=self.alpha))
+            dmodx_lim = float(
+                pca.calc_limit(metric="DModX", m=n_varying, alpha=self.alpha)
+            )
             self._check_limits(class_label, t2_limit, dmodx_lim, s0)
 
             # Calculate R² for diagnostics, against centred variation

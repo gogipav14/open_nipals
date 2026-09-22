@@ -703,7 +703,7 @@ class TestSIMCAReviewRound3:
     def test_constant_decimal_column_is_not_scaled_up(self):
         """A column of identical 0.1 values must get scale 1, not ~1e-17."""
         rng = np.random.default_rng(0)
-        X = rng.normal(size=(20, 4))
+        X = rng.normal(size=(20, 6))
         X[:, 1] = 0.1
         y = np.array([0] * 10 + [1] * 10)
 
@@ -966,7 +966,7 @@ class TestSIMCAReviewRound6:
 
         X_padded = np.vstack([X, np.full((360, 5), np.nan)])
         y_padded = np.zeros(400, dtype=int)
-        with pytest.warns(UserWarning, match="Dropping 360"):
+        with pytest.warns(UserWarning, match="dropping 360"):
             model = SIMCA(n_components=2, scale=False).fit(X_padded, y_padded)
 
         ref_model = reference.class_models_[0]
@@ -990,3 +990,68 @@ class TestSIMCAReviewRound6:
         distances = model.get_distances(X)
         assert np.all(np.isfinite(distances["t2"]))
         assert np.all(np.isfinite(distances["dmodx"]))
+
+
+class TestSIMCAReviewRound7:
+    """Findings of the seventh adversarial review."""
+
+    def test_rows_observed_only_in_constant_features_are_dropped(self):
+        rng = np.random.default_rng(0)
+        X = np.column_stack([rng.normal(size=(40, 5)), np.full(40, 3.0)])
+        y = np.zeros(40, dtype=int)
+        reference = SIMCA(
+            n_components=2, scale=False, unknown_handling="reject"
+        ).fit(X, y)
+
+        padding = np.full((360, 6), np.nan)
+        padding[:, 5] = 3.0
+        with pytest.warns(UserWarning, match="dropping 360"):
+            model = SIMCA(
+                n_components=2, scale=False, unknown_handling="reject"
+            ).fit(np.vstack([X, padding]), np.zeros(400, dtype=int))
+
+        assert model.class_models_[0].n_samples == 40
+        assert model.class_models_[0].s0 == pytest.approx(
+            reference.class_models_[0].s0
+        )
+        assert list(model.predict(X)) == list(reference.predict(X))
+
+    def test_constant_columns_do_not_inflate_eigenvalues(self):
+        rng = np.random.default_rng(0)
+        eigenvalues = np.array([2.0, 0.8, 0.8, 0.8, 0.8, 0.8])
+        n_samples = 500
+        centred = rng.normal(size=(n_samples, 6))
+        centred -= centred.mean(axis=0)
+        scores, _ = np.linalg.qr(centred)
+        basis, _ = np.linalg.qr(rng.normal(size=(6, 6)))
+        X = scores * np.sqrt((n_samples - 1) * eigenvalues) @ basis.T
+        X_const = np.column_stack([X, np.zeros((n_samples, 2))])
+
+        pca = NipalsPCA(n_components=3).fit(X)
+        pca_const = NipalsPCA(n_components=3).fit(X_const)
+
+        assert ComponentSelector.select_by_eigenvalue(pca, X) == 1
+        assert ComponentSelector.select_by_eigenvalue(pca_const, X_const) == 1
+
+
+def test_constant_columns_do_not_change_the_model():
+    """Adding class-constant features must leave distances and limits."""
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(40, 5))
+    y = np.array([0] * 20 + [1] * 20)
+    X_const = np.column_stack([X, np.full((40, 3), 7.0)])
+
+    for scale in (True, False):
+        base = SIMCA(n_components=2, scale=scale).fit(X, y)
+        const = SIMCA(n_components=2, scale=scale).fit(X_const, y)
+
+        for label in base.classes_:
+            assert const.class_models_[label].dmodx_limit == pytest.approx(
+                base.class_models_[label].dmodx_limit
+            )
+        np.testing.assert_allclose(
+            const.get_distances(X_const)["dmodx"],
+            base.get_distances(X)["dmodx"],
+            rtol=1e-8,
+        )
+        assert list(const.predict(X_const)) == list(base.predict(X))
