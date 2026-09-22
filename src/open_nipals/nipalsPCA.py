@@ -175,8 +175,12 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
         # Loop for all LVs
         for i in num_lvs:
-            # choose a column of input_array
-            t_new = data[:, [0]].copy()
+            # choose a column of input_array as the starting guess; a
+            # column of zeros would make every iteration NaN
+            start_col = 0
+            if not np.any(data[:, 0]):
+                start_col = np.argmax(np.nansum(data**2, axis=0))
+            t_new = data[:, [start_col]].copy()
 
             # Replace any nans w/ zero
             t_new[np.isnan(t_new)] = 0
@@ -279,6 +283,9 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
             self.n_components = n_component
         else:
             n_to_add = n_component - max_fit_lvs
+            # Deflation in _add_components uses the active components, so
+            # activate all fitted ones or the new ones repeat old directions
+            self.n_components = max_fit_lvs
             self._add_components(n_to_add, verbose=verbose)
             self.set_components(n_component)
 
@@ -383,6 +390,8 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                 self.set_components(old_components)
 
             theta = (T.T @ T) / (fit_rows - 1)
+            # missing values get filled in below, leave the input untouched
+            X = X.copy()
             for row in range(n):
                 is_null = nan_mask[row, :]
                 not_null = np.invert(is_null)  # just for readability

@@ -369,3 +369,48 @@ def test_explained_variance_ratio(get_data, request):
     # check if strictly decreasing
     diffs = np.diff(ex_var_ratio)
     assert np.all(diffs <= 0), "Explained variance ratio must be decreasing"
+
+
+def test_set_component_shrink_then_grow():
+    """Components added after shrinking must not repeat fitted ones"""
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(60, 5)) @ rng.normal(size=(5, 5))
+    data = data - data.mean(axis=0)
+
+    model_ref = NipalsPCA(n_components=5).fit(data)
+    model = NipalsPCA(n_components=4).fit(data)
+    model.set_components(2)
+    model.set_components(5)
+
+    assert np.allclose(model.loadings, model_ref.loadings, atol=1e-6), (
+        "Loadings after shrinking and growing differ from a direct fit"
+    )
+
+
+def test_conditional_mean_keeps_input():
+    """Transforming must not fill in the NaNs of the caller's array"""
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(60, 5)) @ rng.normal(size=(5, 5))
+    data[rng.random(size=data.shape) < 0.1] = np.nan
+    data = data - np.nanmean(data, axis=0)
+    model = NipalsPCA(n_components=2).fit(data)
+
+    data_before = data.copy()
+    model.transform(data, method="conditional_mean")
+
+    assert np.array_equal(data, data_before, equal_nan=True), (
+        "transform(method='conditional_mean') modified its input"
+    )
+
+
+def test_zero_first_column():
+    """A column of zeros must not poison the NIPALS starting guess"""
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(60, 5))
+    data = data - data.mean(axis=0)
+    data[:, 0] = 0
+
+    model = NipalsPCA(n_components=2).fit(data)
+
+    assert np.all(np.isfinite(model.loadings)), "Loadings contain NaN"
+    assert np.all(np.isfinite(model.fit_scores)), "Scores contain NaN"
