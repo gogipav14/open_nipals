@@ -114,6 +114,46 @@ Note that the NIPALS algorithm avoids calculating eigenvalues, therefore they ar
 Additionally, the regression vector can be calculated for a `NipalsPLS` model with `get_reg_vector()`.
 The regression vector is a measure of how relevant each X feature is for the prediction of the y data.
 
+## GPU acceleration with JAX (optional)
+
+`open_nipals.jax` contains drop-in versions of `NipalsPCA` and `NipalsPLS` whose fit and transform run as compiled [JAX](https://docs.jax.dev) programs, on a GPU if one is available.
+They implement the same algorithm, including the missing data handling, and reproduce the results of the NumPy classes to rounding error.
+```bash
+pip install open_nipals[jax]        # CPU only
+pip install open_nipals[jax-cuda]   # NVIDIA GPU
+```
+```python
+import jax
+from open_nipals.jax import NipalsPCA, NipalsPLS
+
+jax.config.update("jax_enable_x64", True)  # see below
+model = NipalsPCA(n_components=5).fit(data)
+```
+
+Things to know:
+
+- Inputs and all fitted attributes stay NumPy arrays, so the models can be mixed with the rest of `open_nipals` and `scikit-learn`.
+- JAX computes in 32-bit unless its 64-bit mode is on. The models follow that setting: to reproduce the NumPy results, call `jax.config.update("jax_enable_x64", True)` in your application before fitting (the package does not change this process-wide setting for you). In float32 the models are faster and use half the GPU memory, but agree with the NumPy results to only a few digits (`tol_criteria` is floored at `1e-5`). Pass `dtype="float64"` or `dtype="float32"` to insist on a precision; `dtype="float64"` raises a clear error if 64-bit mode is off.
+- The first fit for a given data shape and number of components includes compilation. Later fits of the same shape, e.g. in cross validation, reuse the compiled code.
+- Small data sets do not benefit from a GPU; see the measurements below and `benchmarks/bench_jax.py` to reproduce them on your hardware.
+
+Time in seconds for `fit()` with 5 components, excluding the one-off compilation (0.4 to 5 s), on an Intel Core Ultra 5 225F and an NVIDIA RTX 5060 (8 GB). "10 % NaN" means 10 % of the X entries are missing at random.
+
+| model | rows x columns | data | NumPy | JAX GPU float64 | JAX GPU float32 |
+|---|---|---|---|---|---|
+| PCA | 200 x 50 | 10 % NaN | 0.013 | 0.027 | 0.024 |
+| PCA | 2000 x 200 | 10 % NaN | 1.5 | 0.13 | 0.044 |
+| PCA | 10000 x 500 | complete | 9.6 | 0.46 | 0.13 |
+| PCA | 10000 x 500 | 10 % NaN | 80 | 0.64 | 0.16 |
+| PLS | 10000 x 500 | complete | 0.79 | 0.11 | 0.054 |
+| PLS | 10000 x 500 | 10 % NaN | 12.6 | 0.16 | 0.080 |
+| PCA | 20000 x 2000 | complete | 28 | 3.2 | 1.4 |
+| PCA | 20000 x 2000 | 10 % NaN | 966 | 4.7 | 1.9 |
+| PLS | 20000 x 2000 | complete | 11.8 | 0.95 | 0.52 |
+| PCA | 50000 x 2000 | 10 % NaN | not run | 17.3 | 5.9 |
+
+Without a GPU the JAX classes are still about 7x faster than NumPy on data with missing values, but can be slower on large complete data.
+
 
 # References
 
