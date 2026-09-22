@@ -1239,3 +1239,28 @@ def test_class_without_usable_rows_raises_clearly():
     with pytest.warns(UserWarning, match="dropping 10"):
         with pytest.raises(ValueError, match="no training row"):
             SIMCA(n_components=1).fit(X, np.zeros(10, dtype=int))
+
+
+class TestSIMCAReviewRound12:
+    """Finding of the twelfth adversarial review."""
+
+    @pytest.mark.parametrize("selection", ["r2", "q2", "eigenvalue"])
+    def test_auto_selection_respects_missing_data_pattern(self, selection):
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(80, 6))
+        for row in X:
+            row[rng.choice(6, size=3, replace=False)] = np.nan
+        y = np.zeros(80, dtype=int)
+
+        model = SIMCA(
+            n_components="auto",
+            component_selection=selection,
+            r2_threshold=0.99,
+        ).fit(X, y)
+
+        class_model = model.class_models_[0]
+        assert class_model.n_components <= 2
+        assert class_model.n_samples == 80
+        distances = model.get_distances(X)
+        assert np.all(np.isfinite(distances["t2"]))
+        assert np.all(np.isfinite(distances["dmodx"]))

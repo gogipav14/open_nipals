@@ -497,6 +497,19 @@ class SIMCA(ClassifierMixin, BaseEstimator):
             )
         return not caught and bool(np.isfinite(limit)) and limit > 0
 
+    def _count_is_feasible(self, X_class: np.ndarray, n_comp: int) -> bool:
+        """Whether n_comp leaves a usable model after row filtering."""
+        keep = _determined_rows(X_class, n_comp)
+        n_samples = int(np.sum(keep))
+        if n_samples == 0:
+            return False
+        n_features = _n_varying(X_class[keep])
+        return (
+            n_samples - n_comp - 1 >= 1
+            and n_features - n_comp >= 1
+            and self._limit_is_usable(n_samples, n_features, n_comp)
+        )
+
     def _validate_n_components(
         self,
         n_components: int,
@@ -619,6 +632,16 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         n_samples = X_class.shape[0]
         n_features = _n_varying(X_class)
         max_components = self._max_components(n_samples, n_features)
+
+        # With missing data a larger count drops more rows (see
+        # _determined_rows); only offer counts that still leave a usable
+        # model after that filtering
+        feasible = 0
+        for n_comp in range(1, max_components + 1):
+            if not self._count_is_feasible(X_class, n_comp):
+                break
+            feasible = n_comp
+        max_components = feasible
 
         if max_components < 1:
             raise ValueError(
