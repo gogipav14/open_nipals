@@ -5,56 +5,24 @@ Uses NIPALS PCA to build per-class models and classifies samples based on
 Hotelling's T² (in-model distance) and a normalised DModX (out-of-model
 distance).
 
-Each class model is centred on its own training mean, so the PCA planes
-describe the *within-class* variation. DModX is reported relative to the
-pooled residual standard deviation s0 of that class, which makes it
-dimensionless and comparable with the F-based critical value.
+Each class model is centred, and with ``scale=True`` autoscaled, on its
+own training data, so the PCA planes describe the *within-class*
+variation (as in SIMCA-P and other SIMCA implementations). DModX is
+reported relative to the pooled residual standard deviation s0 of that
+class, which makes it dimensionless and comparable with the critical
+value from :meth:`~open_nipals.nipalsPCA.NipalsPCA.calc_limit`.
 """
 
 import numpy as np
 import warnings
 from dataclasses import dataclass
 from typing import Optional, Union, List, Dict, Any, Literal
-from scipy.stats import f as F_dist
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import NotFittedError
 
 from open_nipals.nipalsPCA import NipalsPCA
 from .metrics import calc_r2_cumulative_pca, calc_q2_cumulative_pca
-from .cross_validation import KFoldCV
-
-
-def dmodx_limit(
-    alpha: float, n_samples: int, n_features: int, n_components: int
-) -> float:
-    """
-    Critical value for the normalised DModX statistic.
-
-    DModX divided by the pooled training residual standard deviation is
-    approximately the square root of an F ratio with (K - A) and
-    (n - A - 1)(K - A) degrees of freedom, following the SIMCA-P
-    definition.
-
-    Parameters
-    ----------
-    alpha : float
-        Confidence level.
-    n_samples : int
-        Number of training rows in the class, n.
-    n_features : int
-        Number of features, K.
-    n_components : int
-        Number of components, A.
-
-    Returns
-    -------
-    float
-        Critical value for the normalised DModX.
-    """
-    dof_obs = n_features - n_components
-    dof_mod = (n_samples - n_components - 1) * dof_obs
-    return float(np.sqrt(F_dist.ppf(alpha, dof_obs, dof_mod)))
+from .cross_validation import KFoldCV, _class_std
 
 
 @dataclass
@@ -76,8 +44,12 @@ class SIMCAClass:
     n_samples : int
         Number of training samples in this class.
     class_mean : np.ndarray
-        Mean of the class training data, after global scaling. It is
-        subtracted before the PCA model is applied.
+        Mean of the class training data. Subtracted before the PCA
+        model is applied.
+    class_std : np.ndarray
+        Standard deviation (ddof=1) of the class training data, all ones
+        when the model was fitted with ``scale=False``. The centred data
+        is divided by it before the PCA model is applied.
     s0 : float
         Pooled residual standard deviation of the class training data.
         The absolute DModX of new samples is divided by it.
@@ -93,6 +65,7 @@ class SIMCAClass:
     dmodx_limit: float
     n_samples: int
     class_mean: np.ndarray
+    class_std: np.ndarray
     s0: float
     r2_cumulative: Optional[np.ndarray] = None
 
@@ -105,7 +78,7 @@ class ComponentSelector:
         pca_model: NipalsPCA,
         X: np.ndarray,
         threshold: float = 0.80,
-        max_components: int = 10
+        max_components: int = 10,
     ) -> int:
         """
         Select number of components where cumulative R² >= threshold.
@@ -146,14 +119,15 @@ class ComponentSelector:
         max_components: int = 10,
         cv_folds: int = 7,
         min_improvement: float = 0.05,
-        **model_kwargs
+        scale: bool = False,
+        **model_kwargs,
     ) -> int:
         """
         Select components where Q² stops improving significantly.
 
         Q² comes from the element-wise (Wold) cross-validation in
         :func:`~open_nipals.simca.cross_validation.cross_val_press_pca`,
-        with the centring re-estimated inside every fold.
+        with the centring (and scaling) re-estimated inside every fold.
 
         Parameters
         ----------
@@ -198,7 +172,7 @@ class ComponentSelector:
             )
 
         q2_values = calc_q2_cumulative_pca(
-            model_class, X, cv, max_components, **model_kwargs
+            model_class, X, cv, max_components, scale=scale, **model_kwargs
         )
 
         # Find where Q² stops improving
@@ -214,9 +188,7 @@ class ComponentSelector:
 
     @staticmethod
     def select_by_eigenvalue(
-        pca_model: NipalsPCA,
-        X: np.ndarray,
-        threshold: float = 1.0
+        pca_model: NipalsPCA, X: np.ndarray, threshold: float = 1.0
     ) -> int:
         """
         Select components using Kaiser criterion (eigenvalue > threshold).
@@ -272,7 +244,9 @@ class SIMCA(BaseEstimator, ClassifierMixin):
     q2_min_improvement : float, default=0.05
         Minimum Q² improvement when component_selection='q2'.
     scale : bool, default=True
-        Whether to apply StandardScaler to data.
+        Autoscale each class by its own training mean and standard
+        deviation (ddof=1), as SIMCA-P does. With False the classes are
+        only centred.
     unknown_handling : str, default='closest'
         How to handle samples not in any class:
         - 'closest': Assign to closest class by combined distance.
@@ -288,9 +262,6 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         Unique class labels.
     class_models_ : dict
         Dictionary mapping class labels to SIMCAClass objects.
-    scaler_ : StandardScaler or None
-        Fitted scaler if scaling was applied.
-
     Notes
     -----
     Preprocessing is applied exactly once per call, in
@@ -327,37 +298,12 @@ class SIMCA(BaseEstimator, ClassifierMixin):
 
         self.classes_ = None
         self.class_models_: Dict[Any, SIMCAClass] = {}
-        self.scaler_: Optional[StandardScaler] = None
-
-    def _check_if_scaled(self, X: np.ndarray) -> bool:
-        """
-        Check if data appears already scaled (mean≈0, std≈1).
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Data to check.
-
-        Returns
-        -------
-        bool
-            True if data appears pre-scaled.
-        """
-        # Handle NaN values
-        means = np.abs(np.nanmean(X, axis=0))
-        stds = np.nanstd(X, axis=0)
-
-        is_centered = np.all(means < 0.1)
-        is_scaled = np.all(np.abs(stds - 1.0) < 0.1)
-
-        return is_centered and is_scaled
 
     def _prepare_input(self, X: np.ndarray) -> np.ndarray:
         """
-        Convert X to a 2-D float array and scale it exactly once.
+        Convert X to a 2-D float array in the original feature space.
 
-        This is the single entry point for preprocessing. Every public
-        method calls it once; the private helpers never scale again.
+        Centring and scaling are per class, see :meth:`_to_class_space`.
 
         Parameters
         ----------
@@ -367,7 +313,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         Returns
         -------
         np.ndarray
-            Globally scaled data, still uncentred per class.
+            The same samples as a float array.
         """
         X = np.asarray(X, dtype=float)
 
@@ -376,10 +322,11 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 f"X must be a 2-D array, got {X.ndim} dimension(s)."
             )
 
-        if self.scaler_ is not None:
-            X = self.scaler_.transform(X)
-
         return X
+
+    def _to_class_space(self, X: np.ndarray, model: SIMCAClass) -> np.ndarray:
+        """Centre (and scale) samples the way the class model was fitted."""
+        return (X - model.class_mean) / model.class_std
 
     def _check_fitted(self):
         """Raise NotFittedError if fit() has not been called."""
@@ -441,8 +388,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         """
         if not isinstance(n_components, (int, np.integer)):
             raise ValueError(
-                "n_components must be an int or 'auto', got "
-                f"{n_components!r}."
+                f"n_components must be an int or 'auto', got {n_components!r}."
             )
 
         if n_components < 1:
@@ -549,6 +495,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 max_components,
                 self.q2_cv_folds,
                 self.q2_min_improvement,
+                scale=self.scale,
                 max_iter=self.max_iter,
                 tol_criteria=self.tol_criteria,
             )
@@ -556,9 +503,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         elif self.component_selection == "eigenvalue":
             temp_pca = self._create_pca_model(max_components)
             temp_pca.fit(X_class)
-            n_comp = ComponentSelector.select_by_eigenvalue(
-                temp_pca, X_class
-            )
+            n_comp = ComponentSelector.select_by_eigenvalue(temp_pca, X_class)
 
         else:
             raise ValueError(
@@ -604,19 +549,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 f"{self.n_components!r}."
             )
 
-        # Handle scaling
-        if self.scale:
-            if self._check_if_scaled(X):
-                warnings.warn(
-                    "Data appears pre-scaled (mean≈0, std≈1), skipping scaling"
-                )
-                self.scaler_ = None
-            else:
-                self.scaler_ = StandardScaler().fit(X)
-        else:
-            self.scaler_ = None
-
-        X_scaled = self._prepare_input(X)
+        X = self._prepare_input(X)
 
         # Get unique classes
         self.classes_ = np.unique(y)
@@ -625,12 +558,17 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         # Build PCA model for each class
         for class_label in self.classes_:
             mask = y == class_label
-            X_class = X_scaled[mask]
+            X_class = X[mask]
             n_samples_class, n_features = X_class.shape
 
-            # Each class model describes the variation around its own mean
+            # Each class model describes the variation around its own
+            # mean, in units of its own standard deviation if scale is set
             class_mean = np.nanmean(X_class, axis=0)
-            X_centered = X_class - class_mean
+            if self.scale:
+                class_std = _class_std(X_class)
+            else:
+                class_std = np.ones(n_features)
+            X_centered = (X_class - class_mean) / class_std
 
             # Select and validate the number of components
             if isinstance(self.n_components, (int, np.integer)):
@@ -649,19 +587,15 @@ class SIMCA(BaseEstimator, ClassifierMixin):
             # Pooled residual standard deviation of the training class,
             # the scale that makes DModX dimensionless
             scores = np.asarray(pca.transform(X_centered))
-            residuals = X_centered - np.asarray(
-                pca.inverse_transform(scores)
-            )
+            residuals = X_centered - np.asarray(pca.inverse_transform(scores))
             dof = (n_samples_class - n_comp - 1) * (n_features - n_comp)
-            s0 = float(np.sqrt(np.nansum(residuals ** 2) / dof))
+            s0 = float(np.sqrt(np.nansum(residuals**2) / dof))
 
             # Calculate limits
             t2_limit = float(
                 pca.calc_limit(metric="HotellingT2", alpha=self.alpha)
             )
-            dmodx_lim = dmodx_limit(
-                self.alpha, n_samples_class, n_features, n_comp
-            )
+            dmodx_lim = float(pca.calc_limit(metric="DModX", alpha=self.alpha))
             self._check_limits(class_label, t2_limit, dmodx_lim, s0)
 
             # Calculate R² for diagnostics, against centred variation
@@ -676,21 +610,20 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 dmodx_limit=dmodx_lim,
                 n_samples=n_samples_class,
                 class_mean=class_mean,
+                class_std=class_std,
                 s0=s0,
                 r2_cumulative=r2_cumulative,
             )
 
         return self
 
-    def _calc_distances(
-        self, X_scaled: np.ndarray, class_label: Any
-    ) -> tuple:
+    def _calc_distances(self, X: np.ndarray, class_label: Any) -> tuple:
         """
         Calculate T² and normalised DModX to a specific class.
 
         Parameters
         ----------
-        X_scaled : np.ndarray
+        X : np.ndarray
             Data that already went through :meth:`_prepare_input`.
         class_label : Any
             Class to measure the distance to.
@@ -706,22 +639,20 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         model = self.class_models_[class_label]
         pca = model.pca_model
 
-        X_centered = X_scaled - model.class_mean
+        X_centered = self._to_class_space(X, model)
 
         t2 = np.asarray(pca.calc_imd(input_array=X_centered)).ravel()
-        dmodx = np.asarray(
-            pca.calc_oomd(X_centered, metric="DModX")
-        ).ravel()
+        dmodx = np.asarray(pca.calc_oomd(X_centered, metric="DModX")).ravel()
 
         return t2, dmodx / model.s0
 
-    def _calc_combined_distances(self, X_scaled: np.ndarray) -> np.ndarray:
+    def _calc_combined_distances(self, X: np.ndarray) -> np.ndarray:
         """
         Calculate combined normalized distances to all classes.
 
         Parameters
         ----------
-        X_scaled : np.ndarray
+        X : np.ndarray
             Data that already went through :meth:`_prepare_input`.
 
         Returns
@@ -729,30 +660,30 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         np.ndarray
             Shape (n_samples, n_classes) with normalized distances.
         """
-        n_samples = X_scaled.shape[0]
+        n_samples = X.shape[0]
         n_classes = len(self.classes_)
         distances = np.zeros((n_samples, n_classes))
 
         for i, class_label in enumerate(self.classes_):
             model = self.class_models_[class_label]
-            t2, dmodx = self._calc_distances(X_scaled, class_label)
+            t2, dmodx = self._calc_distances(X, class_label)
 
             # Normalize by limits
             t2_norm = t2 / model.t2_limit
             dmodx_norm = dmodx / model.dmodx_limit
 
             # Combined distance (Euclidean in normalized space)
-            distances[:, i] = np.sqrt(t2_norm ** 2 + dmodx_norm ** 2)
+            distances[:, i] = np.sqrt(t2_norm**2 + dmodx_norm**2)
 
         return distances
 
-    def _class_membership(self, X_scaled: np.ndarray) -> Dict[str, List]:
+    def _class_membership(self, X: np.ndarray) -> Dict[str, List]:
         """
         Determine class membership for already prepared samples.
 
         Parameters
         ----------
-        X_scaled : np.ndarray
+        X : np.ndarray
             Data that already went through :meth:`_prepare_input`.
 
         Returns
@@ -760,7 +691,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         dict
             See :meth:`get_class_membership`.
         """
-        n_samples = X_scaled.shape[0]
+        n_samples = X.shape[0]
 
         results = {
             "t2_in": [[] for _ in range(n_samples)],
@@ -771,7 +702,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
 
         for class_label in self.classes_:
             model = self.class_models_[class_label]
-            t2, dmodx = self._calc_distances(X_scaled, class_label)
+            t2, dmodx = self._calc_distances(X, class_label)
 
             # Non-finite distances never compare <=, so they are rejected
             t2_within = t2 <= model.t2_limit
@@ -789,9 +720,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
 
         return results
 
-    def get_class_membership(
-        self, X: np.ndarray
-    ) -> Dict[str, List]:
+    def get_class_membership(self, X: np.ndarray) -> Dict[str, List]:
         """
         Determine class membership for samples.
 
@@ -831,14 +760,12 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         """
         self._check_fitted()
 
-        X_scaled = self._prepare_input(X)
-        membership = self._class_membership(X_scaled)
-        distances = self._calc_combined_distances(X_scaled)
+        X = self._prepare_input(X)
+        membership = self._class_membership(X)
+        distances = self._calc_combined_distances(X)
 
         # Non-finite distances must never win an argmin
-        finite_distances = np.where(
-            np.isfinite(distances), distances, np.inf
-        )
+        finite_distances = np.where(np.isfinite(distances), distances, np.inf)
 
         predictions = []
 
@@ -851,8 +778,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
                 # Multiple memberships - pick closest
                 # Only consider the classes that sample belongs to
                 class_indices = [
-                    np.where(self.classes_ == c)[0][0]
-                    for c in member_classes
+                    np.where(self.classes_ == c)[0][0] for c in member_classes
                 ]
                 closest_idx = class_indices[
                     np.argmin(finite_distances[i, class_indices])
@@ -905,8 +831,9 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         totals = similarities.sum(axis=1, keepdims=True)
         n_classes = distances.shape[1]
         proba = np.where(
-            totals > 0, similarities / np.where(totals > 0, totals, 1.0),
-            1.0 / n_classes
+            totals > 0,
+            similarities / np.where(totals > 0, totals, 1.0),
+            1.0 / n_classes,
         )
 
         return proba
@@ -930,7 +857,8 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         y_pred = self.predict(X)
         # Handle None predictions
         correct = sum(
-            1 for pred, true in zip(y_pred, y)
+            1
+            for pred, true in zip(y_pred, y)
             if pred is not None and pred == true
         )
         return correct / len(y)
@@ -955,8 +883,8 @@ class SIMCA(BaseEstimator, ClassifierMixin):
         """
         self._check_fitted()
 
-        X_scaled = self._prepare_input(X)
-        n_samples = X_scaled.shape[0]
+        X = self._prepare_input(X)
+        n_samples = X.shape[0]
         n_classes = len(self.classes_)
 
         t2_all = np.zeros((n_samples, n_classes))
@@ -966,7 +894,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
 
         for i, class_label in enumerate(self.classes_):
             model = self.class_models_[class_label]
-            t2, dmodx = self._calc_distances(X_scaled, class_label)
+            t2, dmodx = self._calc_distances(X, class_label)
             t2_all[:, i] = t2
             dmodx_all[:, i] = dmodx
             t2_limits[i] = model.t2_limit

@@ -113,12 +113,16 @@ class TestJAXSIMCAvsNumPy:
         X, y = two_class_data
 
         # NumPy SIMCA
-        model_np = SIMCA(n_components=2, scale=True, unknown_handling="closest")
+        model_np = SIMCA(
+            n_components=2, scale=True, unknown_handling="closest"
+        )
         model_np.fit(X, y)
         y_pred_np = model_np.predict(X)
 
         # JAX SIMCA
-        model_jax = SIMCA_JAX(n_components=2, scale=True, unknown_handling="closest")
+        model_jax = SIMCA_JAX(
+            n_components=2, scale=True, unknown_handling="closest"
+        )
         model_jax.fit(X, y)
         y_pred_jax = model_jax.predict(X)
 
@@ -224,23 +228,14 @@ class TestJAXSIMCAScaling:
     """Test JAX SIMCA scaling behavior."""
 
     def test_scale_raw_data(self, two_class_data):
-        """Test scaling on raw data."""
+        """Each class is autoscaled on its own training rows."""
         X, y = two_class_data
-        model = SIMCA_JAX(n_components=2, scale=True)
-        model.fit(X, y)
+        model = SIMCA_JAX(n_components=2, scale=True).fit(X, y)
 
-        assert model.scaler_ is not None
-
-    def test_skip_prescaled(self, two_class_data):
-        """Test skipping scaling for pre-scaled data."""
-        X, y = two_class_data
-        X_scaled = (X - X.mean(axis=0)) / X.std(axis=0)
-
-        with pytest.warns(UserWarning, match="pre-scaled"):
-            model = SIMCA_JAX(n_components=2, scale=True)
-            model.fit(X_scaled, y)
-
-        assert model.scaler_ is None
+        for label, class_model in model.class_models_.items():
+            np.testing.assert_allclose(
+                class_model.class_std, X[y == label].std(axis=0, ddof=1)
+            )
 
 
 @pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
@@ -250,7 +245,9 @@ class TestJAXSIMCAUnknown:
     def test_unknown_closest(self, two_class_data):
         """Test unknown_handling='closest'."""
         X, y = two_class_data
-        model = SIMCA_JAX(n_components=2, scale=True, unknown_handling="closest")
+        model = SIMCA_JAX(
+            n_components=2, scale=True, unknown_handling="closest"
+        )
         model.fit(X, y)
 
         outlier = np.random.randn(1, X.shape[1]) * 10
@@ -261,7 +258,9 @@ class TestJAXSIMCAUnknown:
     def test_unknown_reject(self, two_class_data):
         """Test unknown_handling='reject'."""
         X, y = two_class_data
-        model = SIMCA_JAX(n_components=2, scale=True, unknown_handling="reject", alpha=0.99)
+        model = SIMCA_JAX(
+            n_components=2, scale=True, unknown_handling="reject", alpha=0.99
+        )
         model.fit(X, y)
 
         outlier = np.ones((1, X.shape[1])) * 100
@@ -278,10 +277,9 @@ class TestJAXSIMCAReworkParity:
         """Finding 2: class means are removed before fitting."""
         X, y = two_class_data
         model = SIMCA_JAX(n_components=2, scale=True).fit(X, y)
-        X_scaled = model.scaler_.transform(X)
 
         for label, class_model in model.class_models_.items():
-            expected = X_scaled[y == label].mean(axis=0)
+            expected = X[y == label].mean(axis=0)
             np.testing.assert_allclose(
                 class_model.class_mean, expected, atol=1e-12
             )
@@ -384,9 +382,7 @@ class TestJAXSIMCAReworkParity:
 class TestJAXPRESSFailedPredictions:
     """Finding 6: the JAX PRESS must not reward failed predictions."""
 
-    def test_press_infinite_when_all_predictions_fail(
-        self, sample_pca_data
-    ):
+    def test_press_infinite_when_all_predictions_fail(self, sample_pca_data):
         """All-NaN predictions give infinite PRESS in both backends."""
         X = sample_pca_data
         X_pred = np.full_like(X, np.nan)

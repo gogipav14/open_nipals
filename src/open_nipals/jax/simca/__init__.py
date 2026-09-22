@@ -33,7 +33,6 @@ from .cross_validation import (
 from open_nipals.simca.simca import (
     SIMCAClass,
     ComponentSelector,
-    dmodx_limit,
 )
 
 __all__ = [
@@ -41,7 +40,6 @@ __all__ = [
     "SIMCA",
     "SIMCAClass",
     "ComponentSelector",
-    "dmodx_limit",
     # Metrics
     "calc_r2_x",
     "calc_r2_y",

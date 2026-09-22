@@ -14,9 +14,7 @@ if TYPE_CHECKING:
 
 
 def calc_r2_x(
-    X: jnp.ndarray,
-    X_reconstructed: jnp.ndarray,
-    per_variable: bool = False
+    X: jnp.ndarray, X_reconstructed: jnp.ndarray, per_variable: bool = False
 ) -> Union[float, jnp.ndarray]:
     """
     Calculate R² for X-block (explained variance) using JAX.
@@ -47,20 +45,18 @@ def calc_r2_x(
     residuals = X_clean - X_rec_clean
 
     if per_variable:
-        ss_res = jnp.sum(residuals ** 2, axis=0)
-        ss_tot = jnp.sum(X_clean ** 2, axis=0)
+        ss_res = jnp.sum(residuals**2, axis=0)
+        ss_tot = jnp.sum(X_clean**2, axis=0)
         ss_tot = jnp.where(ss_tot == 0, 1.0, ss_tot)
         return 1.0 - (ss_res / ss_tot)
     else:
-        ss_res = jnp.sum(residuals ** 2)
-        ss_tot = jnp.sum(X_clean ** 2)
+        ss_res = jnp.sum(residuals**2)
+        ss_tot = jnp.sum(X_clean**2)
         return float(jnp.where(ss_tot == 0, 0.0, 1.0 - (ss_res / ss_tot)))
 
 
 def calc_r2_y(
-    y_true: jnp.ndarray,
-    y_pred: jnp.ndarray,
-    per_variable: bool = False
+    y_true: jnp.ndarray, y_pred: jnp.ndarray, per_variable: bool = False
 ) -> Union[float, jnp.ndarray]:
     """
     Calculate R² for Y-block (prediction explained variance) using JAX.
@@ -94,20 +90,17 @@ def calc_r2_y(
     residuals = y_true_clean - y_pred_clean
 
     if per_variable:
-        ss_res = jnp.sum(residuals ** 2, axis=0)
-        ss_tot = jnp.sum(y_true_clean ** 2, axis=0)
+        ss_res = jnp.sum(residuals**2, axis=0)
+        ss_tot = jnp.sum(y_true_clean**2, axis=0)
         ss_tot = jnp.where(ss_tot == 0, 1.0, ss_tot)
         return 1.0 - (ss_res / ss_tot)
     else:
-        ss_res = jnp.sum(residuals ** 2)
-        ss_tot = jnp.sum(y_true_clean ** 2)
+        ss_res = jnp.sum(residuals**2)
+        ss_tot = jnp.sum(y_true_clean**2)
         return float(jnp.where(ss_tot == 0, 0.0, 1.0 - (ss_res / ss_tot)))
 
 
-def calc_r2_cumulative_pca(
-    model: "NipalsPCA",
-    X: jnp.ndarray
-) -> np.ndarray:
+def calc_r2_cumulative_pca(model: "NipalsPCA", X: jnp.ndarray) -> np.ndarray:
     """
     Calculate cumulative R² for each component in a PCA model.
 
@@ -137,9 +130,7 @@ def calc_r2_cumulative_pca(
 
 
 def calc_r2_cumulative_pls(
-    model: "NipalsPLS",
-    X: jnp.ndarray,
-    y: jnp.ndarray
+    model: "NipalsPLS", X: jnp.ndarray, y: jnp.ndarray
 ) -> np.ndarray:
     """
     Calculate cumulative R² for Y-block predictions in a PLS model.
@@ -177,9 +168,7 @@ def calc_r2_cumulative_pls(
 
 
 def calc_press(
-    y_true: jnp.ndarray,
-    y_pred_cv: jnp.ndarray,
-    per_variable: bool = False
+    y_true: jnp.ndarray, y_pred_cv: jnp.ndarray, per_variable: bool = False
 ) -> Union[float, jnp.ndarray]:
     """
     Calculate PRESS using JAX.
@@ -218,18 +207,18 @@ def calc_press(
     residuals = jnp.where(valid, y_true - y_pred_cv, 0.0)
 
     if per_variable:
-        press = jnp.sum(residuals ** 2, axis=0)
+        press = jnp.sum(residuals**2, axis=0)
         return jnp.where(jnp.any(failed, axis=0), jnp.inf, press)
 
     if bool(jnp.any(failed)):
         return float("inf")
-    return float(jnp.sum(residuals ** 2))
+    return float(jnp.sum(residuals**2))
 
 
 def calc_q2(
     y_true: jnp.ndarray,
     y_pred_cv: jnp.ndarray,
-    ss_total: Optional[float] = None
+    ss_total: Optional[float] = None,
 ) -> float:
     """
     Calculate Q² (cross-validated R²) using JAX.
@@ -257,7 +246,7 @@ def calc_q2(
     if ss_total is None:
         nan_mask = jnp.isnan(y_true)
         y_clean = jnp.where(nan_mask, 0.0, y_true)
-        ss_total = float(jnp.sum(y_clean ** 2))
+        ss_total = float(jnp.sum(y_clean**2))
 
     if ss_total == 0:
         return 0.0
@@ -271,7 +260,8 @@ def calc_q2_cumulative_pca(
     cv,
     max_components: int,
     n_element_groups: int = 7,
-    **model_kwargs
+    scale: bool = False,
+    **model_kwargs,
 ) -> np.ndarray:
     """
     Calculate cumulative Q² for PCA using element-wise cross-validation.
@@ -292,6 +282,8 @@ def calc_q2_cumulative_pca(
         Maximum number of components.
     n_element_groups : int, default=7
         Number of element groups held out within the validation rows.
+    scale : bool, default=False
+        Re-estimate the column standard deviations inside each fold too.
     **model_kwargs
         Additional arguments for model constructor.
 
@@ -310,6 +302,7 @@ def calc_q2_cumulative_pca(
         cv,
         max_components,
         n_element_groups,
+        scale=scale,
         **model_kwargs,
     )
 
@@ -320,7 +313,7 @@ def calc_q2_cumulative_pls(
     y: jnp.ndarray,
     cv,
     max_components: int,
-    **model_kwargs
+    **model_kwargs,
 ) -> np.ndarray:
     """
     Calculate cumulative Q² for PLS Y-block using cross-validation with JAX.
@@ -353,7 +346,7 @@ def calc_q2_cumulative_pls(
 
     nan_mask = np.isnan(y)
     y_clean = np.where(nan_mask, 0.0, y)
-    ss_total = np.sum(y_clean ** 2)
+    ss_total = np.sum(y_clean**2)
 
     q2_values = np.zeros(max_components)
 
@@ -362,6 +355,8 @@ def calc_q2_cumulative_pls(
             model_class, X, y, n_comp, cv, **model_kwargs
         )
         press = calc_press(y, y_pred_cv)
-        q2_values[n_comp - 1] = 1.0 - (press / ss_total) if ss_total > 0 else 0.0
+        q2_values[n_comp - 1] = (
+            1.0 - (press / ss_total) if ss_total > 0 else 0.0
+        )
 
     return q2_values

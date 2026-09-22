@@ -9,7 +9,7 @@ Provides SIMCA classification with:
 - Multi-class support with configurable unknown handling
 """
 
-from .simca import SIMCA, SIMCAClass, ComponentSelector, dmodx_limit
+from .simca import SIMCA, SIMCAClass, ComponentSelector
 from .metrics import (
     calc_r2_x,
     calc_r2_y,
@@ -34,7 +34,6 @@ __all__ = [
     "SIMCA",
     "SIMCAClass",
     "ComponentSelector",
-    "dmodx_limit",
     # Metrics
     "calc_r2_x",
     "calc_r2_y",

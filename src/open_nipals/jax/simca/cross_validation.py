@@ -20,11 +20,7 @@ from open_nipals.simca.cross_validation import (
 
 
 def cross_val_predict_pca(
-    model_class,
-    X: np.ndarray,
-    n_components: int,
-    cv,
-    **model_kwargs
+    model_class, X: np.ndarray, n_components: int, cv, **model_kwargs
 ) -> np.ndarray:
     """
     Generate cross-validated PCA reconstructions using JAX models.
@@ -74,7 +70,7 @@ def cross_val_predict_pls(
     y: np.ndarray,
     n_components: int,
     cv,
-    **model_kwargs
+    **model_kwargs,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate cross-validated PLS predictions using JAX models.

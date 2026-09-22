@@ -31,7 +31,7 @@ class KFoldCV:
         self,
         n_splits: int = 7,
         shuffle: bool = False,
-        random_state: Optional[int] = None
+        random_state: Optional[int] = None,
     ):
         self.n_splits = n_splits
         self.shuffle = shuffle
@@ -104,13 +104,15 @@ class LeaveOneOutCV:
 
         for i in range(n_samples):
             test_idx = np.array([i])
-            train_idx = np.concatenate([indices[:i], indices[i + 1:]])
+            train_idx = np.concatenate([indices[:i], indices[i + 1 :]])
             yield train_idx, test_idx
 
     def get_n_splits(self, X: np.ndarray = None) -> int:
         """Return number of splits (equals number of samples)."""
         if X is None:
-            raise ValueError("X must be provided for LeaveOneOutCV.get_n_splits()")
+            raise ValueError(
+                "X must be provided for LeaveOneOutCV.get_n_splits()"
+            )
         return X.shape[0]
 
 
@@ -151,7 +153,7 @@ class VenetianBlindsCV:
 
         for fold in range(self.n_splits):
             # Select every n_splits-th sample starting at fold
-            test_idx = indices[fold::self.n_splits]
+            test_idx = indices[fold :: self.n_splits]
             train_idx = np.setdiff1d(indices, test_idx)
             yield train_idx, test_idx
 
@@ -186,19 +188,27 @@ def _element_groups(n_rows: int, n_cols: int, n_groups: int) -> np.ndarray:
     return (rows + cols) % n_groups
 
 
+def _class_std(X: np.ndarray) -> np.ndarray:
+    """Column standard deviations (ddof=1), constant columns give 1."""
+    std = np.nanstd(X, axis=0, ddof=1)
+    return np.where(std > 0, std, 1.0)
+
+
 def cross_val_press_pca(
     model_class,
     X: np.ndarray,
     n_components: int,
     cv,
     n_element_groups: int = 7,
-    **model_kwargs
+    scale: bool = False,
+    **model_kwargs,
 ) -> Tuple[float, float]:
     """
     Element-wise (Wold) cross-validated PRESS for a PCA model.
 
     For every fold the model is fitted on the training rows only, with
-    the mean re-estimated on those rows. The elements of the validation
+    the mean (and, with ``scale``, the standard deviation) re-estimated
+    on those rows. The elements of the validation
     rows are then split into ``n_element_groups`` groups; one group at a
     time is set to NaN, the scores of the validation rows are computed
     from the *remaining* elements with
@@ -219,6 +229,9 @@ def cross_val_press_pca(
         Cross-validation object with split() method.
     n_element_groups : int, default=7
         Number of element groups per fold. Clipped to [2, n_features].
+    scale : bool, default=False
+        Also divide by the training rows' standard deviation (ddof=1),
+        as :class:`~open_nipals.simca.SIMCA` does per class.
     **model_kwargs
         Additional arguments for model constructor.
 
@@ -254,8 +267,9 @@ def cross_val_press_pca(
         # Preprocessing is fitted on the training part of the fold only
         X_train = X[train_idx]
         mean = np.nanmean(X_train, axis=0)
-        X_train = X_train - mean
-        X_val = X[test_idx] - mean
+        std = _class_std(X_train) if scale else 1.0
+        X_train = (X_train - mean) / std
+        X_val = (X[test_idx] - mean) / std
 
         model = model_class(n_components=n_components, **model_kwargs)
         model.fit(X_train)
@@ -270,22 +284,16 @@ def cross_val_press_pca(
                 continue
 
             X_masked = np.where(held_out, np.nan, X_val)
-            scores = np.asarray(
-                model.transform(X_masked, method="projection")
-            )
+            scores = np.asarray(model.transform(X_masked, method="projection"))
             recon = np.asarray(model.inverse_transform(scores))
             resid = X_val[held_out] - recon[held_out]
-            press += float(np.sum(resid ** 2))
+            press += float(np.sum(resid**2))
 
     return press, ss_total
 
 
 def cross_val_predict_pca(
-    model_class,
-    X: np.ndarray,
-    n_components: int,
-    cv,
-    **model_kwargs
+    model_class, X: np.ndarray, n_components: int, cv, **model_kwargs
 ) -> np.ndarray:
     """
     Generate cross-validated PCA reconstructions.
@@ -339,7 +347,7 @@ def cross_val_predict_pls(
     y: np.ndarray,
     n_components: int,
     cv,
-    **model_kwargs
+    **model_kwargs,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate cross-validated PLS predictions.

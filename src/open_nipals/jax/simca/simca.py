@@ -33,7 +33,8 @@ class SIMCA(SIMCA_Base):
     q2_min_improvement : float, default=0.05
         Minimum Q² improvement when component_selection='q2'.
     scale : bool, default=True
-        Whether to apply StandardScaler to data.
+        Autoscale each class by its own training mean and standard
+        deviation, see the NumPy version.
     unknown_handling : str, default='closest'
         How to handle samples not in any class: 'closest' or 'reject'.
     max_iter : int, default=10000

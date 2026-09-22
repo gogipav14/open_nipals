@@ -14,7 +14,6 @@ from open_nipals.simca import (
     KFoldCV,
     LeaveOneOutCV,
     VenetianBlindsCV,
-    dmodx_limit,
 )
 from open_nipals.nipalsPCA import NipalsPCA
 
@@ -52,11 +51,15 @@ def three_class_data():
     y0 = np.zeros(n_per_class)
 
     # Class 1
-    X1 = np.random.randn(n_per_class, n_features) * 0.5 + np.array([2, 0] + [0] * 8)
+    X1 = np.random.randn(n_per_class, n_features) * 0.5 + np.array(
+        [2, 0] + [0] * 8
+    )
     y1 = np.ones(n_per_class)
 
     # Class 2
-    X2 = np.random.randn(n_per_class, n_features) * 0.5 + np.array([0, 2] + [0] * 8)
+    X2 = np.random.randn(n_per_class, n_features) * 0.5 + np.array(
+        [0, 2] + [0] * 8
+    )
     y2 = np.full(n_per_class, 2)
 
     X = np.vstack([X0, X1, X2])
@@ -174,33 +177,66 @@ class TestSIMCABasic:
 class TestSIMCAScaling:
     """Tests for SIMCA scaling behavior."""
 
-    def test_scale_raw_data(self, two_class_data):
-        """Test that scaling is applied to raw data."""
+    def test_each_class_scaled_by_its_own_statistics(self, two_class_data):
+        """Class models are autoscaled on their own training rows."""
         X, y = two_class_data
-        model = SIMCA(n_components=2, scale=True)
-        model.fit(X, y)
+        model = SIMCA(n_components=2, scale=True).fit(X, y)
 
-        assert model.scaler_ is not None
+        for label, class_model in model.class_models_.items():
+            X_class = X[y == label]
+            np.testing.assert_allclose(
+                class_model.class_mean, X_class.mean(axis=0), atol=1e-12
+            )
+            np.testing.assert_allclose(
+                class_model.class_std, X_class.std(axis=0, ddof=1)
+            )
+            fit_data = np.asarray(class_model.pca_model.fit_data)
+            assert np.abs(fit_data.mean(axis=0)).max() < 1e-10
+            np.testing.assert_allclose(fit_data.std(axis=0, ddof=1), 1.0)
 
-    def test_skip_scaling_prescaled(self, two_class_data):
-        """Test that scaling is skipped for pre-scaled data."""
+    def test_scaling_matches_manual_per_class_autoscaling(
+        self, two_class_data
+    ):
+        """scale=True equals autoscaling every class by hand."""
         X, y = two_class_data
-        # Pre-scale the data
-        X_scaled = (X - X.mean(axis=0)) / X.std(axis=0)
+        inside = SIMCA(n_components=2, scale=True).fit(X, y)
 
-        with pytest.warns(UserWarning, match="pre-scaled"):
-            model = SIMCA(n_components=2, scale=True)
-            model.fit(X_scaled, y)
-
-        assert model.scaler_ is None
+        for i, label in enumerate(inside.classes_):
+            X_class = X[y == label]
+            mean, std = X_class.mean(axis=0), X_class.std(axis=0, ddof=1)
+            outside = SIMCA(n_components=2, scale=False).fit(
+                (X_class - mean) / std, np.full(len(X_class), label)
+            )
+            X_manual = (X - mean) / std
+            np.testing.assert_allclose(
+                inside.get_distances(X)["dmodx"][:, i],
+                outside.get_distances(X_manual)["dmodx"][:, 0],
+                rtol=1e-8,
+            )
+            np.testing.assert_allclose(
+                inside.get_distances(X)["t2"][:, i],
+                outside.get_distances(X_manual)["t2"][:, 0],
+                rtol=1e-8,
+            )
 
     def test_no_scale(self, two_class_data):
         """Test with scaling disabled."""
         X, y = two_class_data
-        model = SIMCA(n_components=2, scale=False)
-        model.fit(X, y)
+        model = SIMCA(n_components=2, scale=False).fit(X, y)
 
-        assert model.scaler_ is None
+        for class_model in model.class_models_.values():
+            np.testing.assert_array_equal(class_model.class_std, 1.0)
+
+    def test_constant_feature_does_not_break_scaling(self, two_class_data):
+        """A constant column within a class gets std 1, not 0."""
+        X, y = two_class_data
+        X = X.copy()
+        X[y == y[0], 0] = 3.0
+
+        model = SIMCA(n_components=2, scale=True).fit(X, y)
+
+        assert model.class_models_[y[0]].class_std[0] == 1.0
+        assert np.all(np.isfinite(model.get_distances(X)["dmodx"]))
 
 
 class TestSIMCAUnknownHandling:
@@ -222,7 +258,9 @@ class TestSIMCAUnknownHandling:
     def test_unknown_handling_reject(self, two_class_data):
         """Test unknown_handling='reject' returns None for outliers."""
         X, y = two_class_data
-        model = SIMCA(n_components=2, scale=True, unknown_handling="reject", alpha=0.99)
+        model = SIMCA(
+            n_components=2, scale=True, unknown_handling="reject", alpha=0.99
+        )
         model.fit(X, y)
 
         # Create extreme outlier
@@ -440,38 +478,6 @@ class TestSIMCAPreprocessingOnce:
 
         assert members > 0, "fixture no longer exercises membership"
 
-    def test_scaler_is_applied_once_per_call(self, two_class_data):
-        """predict() must not push the data through the scaler twice."""
-        X, y = two_class_data
-        model = SIMCA(n_components=2, scale=True).fit(X, y)
-
-        original = model.scaler_.transform
-        calls = []
-
-        def counting_transform(data):
-            calls.append(data)
-            return original(data)
-
-        model.scaler_.transform = counting_transform
-        model.predict(X)
-
-        assert len(calls) == 1
-
-    def test_predict_matches_externally_scaled_model(self, two_class_data):
-        """Scaling inside the model must match scaling by hand."""
-        X, y = two_class_data
-
-        inside = SIMCA(n_components=2, scale=True).fit(X, y)
-        X_scaled = inside.scaler_.transform(X)
-        outside = SIMCA(n_components=2, scale=False).fit(X_scaled, y)
-
-        np.testing.assert_allclose(
-            inside.get_distances(X)["dmodx"],
-            outside.get_distances(X_scaled)["dmodx"],
-            rtol=1e-8,
-        )
-        assert list(inside.predict(X)) == list(outside.predict(X_scaled))
-
     def test_membership_matches_distances(self, two_class_data):
         """Membership must be reproducible from the reported distances."""
         X, y = two_class_data
@@ -497,10 +503,9 @@ class TestSIMCAClassCentering:
         """Each PCA model sees data centred on its own class mean."""
         X, y = two_class_data
         model = SIMCA(n_components=2, scale=True).fit(X, y)
-        X_scaled = model.scaler_.transform(X)
 
         for label, class_model in model.class_models_.items():
-            expected = X_scaled[y == label].mean(axis=0)
+            expected = X[y == label].mean(axis=0)
             np.testing.assert_allclose(
                 class_model.class_mean, expected, atol=1e-12
             )
@@ -579,18 +584,14 @@ class TestSIMCADModXNormalisation:
             own = distances["dmodx"][y == label, i]
             assert 0.8 < np.mean(own) < 1.2
 
-    def test_limit_matches_f_distribution(self, centred_two_class_data):
-        """The stored limit is the F-based critical value."""
+    def test_limit_is_the_core_package_limit(self, centred_two_class_data):
+        """One DModX limit definition: NipalsPCA.calc_limit."""
         X, y = centred_two_class_data
         model = SIMCA(n_components=2, scale=False, alpha=0.95).fit(X, y)
-        n_features = X.shape[1]
 
         for class_model in model.class_models_.values():
-            expected = dmodx_limit(
-                0.95,
-                class_model.n_samples,
-                n_features,
-                class_model.n_components,
+            expected = class_model.pca_model.calc_limit(
+                metric="DModX", alpha=0.95
             )
             assert class_model.dmodx_limit == pytest.approx(expected)
             assert np.isfinite(class_model.dmodx_limit)
@@ -649,9 +650,7 @@ class TestSIMCAComponentValidation:
             assert np.isfinite(class_model.t2_limit)
             assert class_model.t2_limit > 0
 
-    @pytest.mark.parametrize(
-        "selection", ["r2", "q2", "eigenvalue"]
-    )
+    @pytest.mark.parametrize("selection", ["r2", "q2", "eigenvalue"])
     def test_auto_selection_respects_limits(self, selection):
         """Every selector stays inside the usable component range."""
         rng = np.random.default_rng(6)
