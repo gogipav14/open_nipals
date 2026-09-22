@@ -112,6 +112,10 @@ def _informative_rows(X_class: np.ndarray, class_label: Any) -> np.ndarray:
     return X_class[keep]
 
 
+class _ResidualExhausted(ValueError):
+    """A component count that leaves no residual variation."""
+
+
 @dataclass
 class SIMCAClass:
     """Container for a single class model in SIMCA.
@@ -711,6 +715,123 @@ class SIMCA(ClassifierMixin, BaseEstimator):
 
         return int(min(max(n_comp, 1), max_components))
 
+    def _fit_class_model(
+        self, X_class: np.ndarray, n_comp: int, class_label: Any
+    ) -> "SIMCAClass":
+        """
+        Fit one class model with a given component count.
+
+        Parameters
+        ----------
+        X_class : np.ndarray
+            Training rows of the class (already without rows unusable by
+            any model), in the original feature space.
+        n_comp : int
+            Number of components.
+        class_label : Any
+            Label of the class, used in messages.
+
+        Returns
+        -------
+        SIMCAClass
+            The fitted class model.
+
+        Raises
+        ------
+        _ResidualExhausted
+            If n_comp leaves no residual variation.
+        ValueError
+            If the class cannot support n_comp components.
+        """
+        n_samples_class = X_class.shape[0]
+        n_varying = _n_varying(X_class)
+        class_mean, class_std = _class_statistics(X_class, self.scale)
+        X_centered = (X_class - class_mean) / class_std
+
+        # A row needs more observed varying features than components:
+        # otherwise its scores are underdetermined and it has no
+        # residual, yet it would count in the T2 score variances, the
+        # sample count of the limits and s0. Drop such rows and
+        # re-estimate the class statistics without them.
+        determined = _determined_rows(X_class, n_comp)
+        if not np.all(determined):
+            warnings.warn(
+                f"Class {class_label!r}: dropping "
+                f"{int(np.sum(~determined))} training rows with fewer "
+                f"than {n_comp + 1} observed varying features, too "
+                f"few for {n_comp} components."
+            )
+            X_class = X_class[determined]
+            n_samples_class = X_class.shape[0]
+            if n_samples_class == 0:
+                raise ValueError(
+                    f"Class {class_label!r}: no training row has "
+                    f"{n_comp + 1} observed varying features."
+                )
+            n_varying = _n_varying(X_class)
+            class_mean, class_std = _class_statistics(X_class, self.scale)
+            X_centered = (X_class - class_mean) / class_std
+
+        self._validate_n_components(
+            n_comp, n_samples_class, n_varying, class_label
+        )
+
+        # Fit PCA model on the centred class data
+        pca = self._create_pca_model(n_comp)
+        pca.fit(X_centered)
+
+        # Pooled residual standard deviation per degree of freedom of
+        # the training class, the scale that makes DModX
+        # dimensionless. Each row has (observed varying features - A)
+        # degrees of freedom; rows with none (too sparse for this A)
+        # cannot contribute a residual estimate and are left out.
+        varying = _varying_mask(X_class)
+        sse, n_observed = _residual_sums(pca, X_centered, varying)
+        usable = n_observed - n_comp >= 1
+        dof = float(np.sum(n_observed[usable] - n_comp))
+        s0 = float(np.sqrt(np.sum(sse[usable]) / dof)) if dof > 0 else np.nan
+        # A residual at rounding level means the components used up
+        # all the variation: DModX would measure numerical noise
+        data_scale = float(np.sqrt(np.nanmean(X_centered**2)))
+        tolerance = np.sqrt(self._compute_eps())
+        if np.isfinite(s0) and s0 <= tolerance * data_scale:
+            raise _ResidualExhausted(
+                f"Class {class_label!r}: n_components={n_comp} leaves "
+                "no residual variation (the class data has rank "
+                f"<= {n_comp}). Use fewer components."
+            )
+
+        # Calculate limits
+        t2_limit = float(
+            pca.calc_limit(metric="HotellingT2", alpha=self.alpha)
+        )
+        dmodx_lim = float(
+            pca.calc_limit(metric="DModX", m=n_varying, alpha=self.alpha)
+        )
+        self._check_limits(class_label, t2_limit, dmodx_lim, s0)
+
+        # Calculate R² for diagnostics, against centred variation
+        r2_cumulative = calc_r2_cumulative_pca(pca, X_centered)
+
+        # Store class model
+        return SIMCAClass(
+            label=class_label,
+            pca_model=pca,
+            n_components=n_comp,
+            t2_limit=t2_limit,
+            dmodx_limit=dmodx_lim,
+            n_samples=n_samples_class,
+            class_mean=class_mean,
+            class_std=class_std,
+            varying=varying,
+            s0=s0,
+            r2_cumulative=r2_cumulative,
+        )
+
+    def _compute_eps(self) -> float:
+        """Machine epsilon of the precision the PCA models compute in."""
+        return float(np.finfo(np.float64).eps)
+
     def fit(self, X: np.ndarray, y: np.ndarray) -> "SIMCA":
         """
         Fit SIMCA model by building PCA models for each class.
@@ -785,88 +906,20 @@ class SIMCA(ClassifierMixin, BaseEstimator):
                 n_comp, n_samples_class, n_varying, class_label
             )
 
-            # A row needs more observed varying features than components:
-            # otherwise its scores are underdetermined and it has no
-            # residual, yet it would count in the T2 score variances, the
-            # sample count of the limits and s0. Drop such rows and
-            # re-estimate the class statistics without them.
-            determined = _determined_rows(X_class, n_comp)
-            if not np.all(determined):
-                warnings.warn(
-                    f"Class {class_label!r}: dropping "
-                    f"{int(np.sum(~determined))} training rows with fewer "
-                    f"than {n_comp + 1} observed varying features, too "
-                    f"few for {n_comp} components."
-                )
-                X_class = X_class[determined]
-                n_samples_class = X_class.shape[0]
-                if n_samples_class == 0:
-                    raise ValueError(
-                        f"Class {class_label!r}: no training row has "
-                        f"{n_comp + 1} observed varying features."
+            # In automatic mode a count whose fit leaves no residual (the
+            # rank estimate is only an upper bound with missing values)
+            # falls back to fewer components
+            automatic = not isinstance(self.n_components, (int, np.integer))
+            while True:
+                try:
+                    class_models[class_label] = self._fit_class_model(
+                        X_class, n_comp, class_label
                     )
-                n_varying = _n_varying(X_class)
-                class_mean, class_std = _class_statistics(X_class, self.scale)
-                X_centered = (X_class - class_mean) / class_std
-
-            self._validate_n_components(
-                n_comp, n_samples_class, n_varying, class_label
-            )
-
-            # Fit PCA model on the centred class data
-            pca = self._create_pca_model(n_comp)
-            pca.fit(X_centered)
-
-            # Pooled residual standard deviation per degree of freedom of
-            # the training class, the scale that makes DModX
-            # dimensionless. Each row has (observed varying features - A)
-            # degrees of freedom; rows with none (too sparse for this A)
-            # cannot contribute a residual estimate and are left out.
-            varying = _varying_mask(X_class)
-            sse, n_observed = _residual_sums(pca, X_centered, varying)
-            usable = n_observed - n_comp >= 1
-            dof = float(np.sum(n_observed[usable] - n_comp))
-            s0 = (
-                float(np.sqrt(np.sum(sse[usable]) / dof))
-                if dof > 0
-                else np.nan
-            )
-            # A residual at rounding level means the components used up
-            # all the variation: DModX would measure numerical noise
-            data_scale = float(np.sqrt(np.nanmean(X_centered**2)))
-            if np.isfinite(s0) and s0 <= 1e-8 * data_scale:
-                raise ValueError(
-                    f"Class {class_label!r}: n_components={n_comp} leaves "
-                    "no residual variation (the class data has rank "
-                    f"<= {n_comp}). Use fewer components."
-                )
-
-            # Calculate limits
-            t2_limit = float(
-                pca.calc_limit(metric="HotellingT2", alpha=self.alpha)
-            )
-            dmodx_lim = float(
-                pca.calc_limit(metric="DModX", m=n_varying, alpha=self.alpha)
-            )
-            self._check_limits(class_label, t2_limit, dmodx_lim, s0)
-
-            # Calculate R² for diagnostics, against centred variation
-            r2_cumulative = calc_r2_cumulative_pca(pca, X_centered)
-
-            # Store class model
-            class_models[class_label] = SIMCAClass(
-                label=class_label,
-                pca_model=pca,
-                n_components=n_comp,
-                t2_limit=t2_limit,
-                dmodx_limit=dmodx_lim,
-                n_samples=n_samples_class,
-                class_mean=class_mean,
-                class_std=class_std,
-                varying=varying,
-                s0=s0,
-                r2_cumulative=r2_cumulative,
-            )
+                    break
+                except _ResidualExhausted:
+                    if not automatic or n_comp == 1:
+                        raise
+                    n_comp -= 1
 
         self.classes_ = classes
         self.class_models_ = class_models

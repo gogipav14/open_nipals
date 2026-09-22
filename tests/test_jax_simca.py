@@ -521,3 +521,26 @@ class TestJAXSIMCAReviewRound6:
                 X_padded, np.zeros(50, dtype=int)
             )
         assert model.class_models_[0].n_samples == 40
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+class TestJAXSIMCAReviewRound15:
+    def test_float32_rounding_residual_is_exhausted(self):
+        """Without x64 the exhaustion test must use float32 precision."""
+        X = np.repeat(
+            np.tile(
+                [[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]], (14, 1)
+            ),
+            4,
+            axis=1,
+        )
+        y = np.zeros(56, dtype=int)
+        jax.config.update("jax_enable_x64", False)
+        try:
+            with pytest.raises(ValueError, match="no residual variation"):
+                SIMCA_JAX(n_components=2).fit(X, y)
+            model = SIMCA_JAX(n_components="auto", component_selection="r2")
+            model.fit(X, y)
+            assert model.class_models_[0].n_components == 1
+        finally:
+            jax.config.update("jax_enable_x64", True)

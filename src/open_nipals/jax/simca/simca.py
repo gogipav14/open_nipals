@@ -48,3 +48,15 @@ class SIMCA(SIMCA_Base):
     """
 
     _pca_class = NipalsPCA_JAX
+
+    def _compute_eps(self) -> float:
+        """Epsilon of the dtype the JAX PCA models compute in.
+
+        The models follow JAX's x64 setting, float32 when it is off, and
+        the residual exhaustion test must use that precision.
+        """
+        import numpy as np
+        from open_nipals.jax.utils import _resolve_dtype
+
+        dtype, _ = _resolve_dtype(None, 1.0)
+        return float(np.finfo(dtype).eps)

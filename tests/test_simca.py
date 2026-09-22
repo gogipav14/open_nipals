@@ -1328,3 +1328,22 @@ class TestSIMCAReviewRound14:
         X = self._duplicated_channels()
         with pytest.raises(ValueError, match="no residual variation"):
             SIMCA(n_components=2).fit(X, np.zeros(56, dtype=int))
+
+
+class TestSIMCAReviewRound15:
+    """Finding of the fifteenth adversarial review."""
+
+    @pytest.mark.parametrize("selection", ["r2", "q2", "eigenvalue"])
+    def test_auto_falls_back_when_missing_values_hide_the_rank(
+        self, selection
+    ):
+        X = TestSIMCAReviewRound14._duplicated_channels().copy()
+        X[:4, 0] = np.nan  # zero filling now overestimates the rank
+
+        model = SIMCA(n_components="auto", component_selection=selection).fit(
+            X, np.zeros(56, dtype=int)
+        )
+
+        class_model = model.class_models_[0]
+        assert class_model.n_components == 1
+        assert np.all(np.isfinite(model.get_distances(X)["dmodx"]))
