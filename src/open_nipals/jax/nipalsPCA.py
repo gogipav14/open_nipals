@@ -30,7 +30,12 @@ from sklearn.covariance import LedoitWolf
 import warnings
 from scipy.stats import f as F_dist
 from functools import partial
-from open_nipals.jax.utils import _masked_mult, _resolve_dtype, _split_nan
+from open_nipals.jax.utils import (
+    _full_precision_methods,
+    _masked_mult,
+    _resolve_dtype,
+    _split_nan,
+)
 from typing import Optional, Tuple
 
 
@@ -107,7 +112,12 @@ def _fit_components(
 
         # choose a column of input_array, NaNs are already zero
         t_init = _start_column(x0, 0)
-        state = (t_init, jnp.zeros_like(t_init), jnp.zeros((m, 1), x0.dtype), 0)
+        state = (
+            t_init,
+            jnp.zeros_like(t_init),
+            jnp.zeros((m, 1), x0.dtype),
+            0,
+        )
         t_new, _, loadings_loc, num_iter = jax.lax.while_loop(
             not_converged, iterate, state
         )
@@ -185,13 +195,16 @@ def _fill_conditional_mean(
         pad = jnp.max(jnp.diag(data_cov) * obs_row)
         system = data_cov * jnp.outer(obs_row, obs_row)
         system = system + pad * jnp.diag(1 - obs_row)
-        system_inv = jnp.linalg.pinv(system, rtol=_pinv_rtol(x0.dtype), hermitian=True)
+        system_inv = jnp.linalg.pinv(
+            system, rtol=_pinv_rtol(x0.dtype), hermitian=True
+        )
         z_hash = data_cov @ (system_inv @ x_row)
         return jnp.where(obs_row > 0, x_row, z_hash)
 
     return jax.lax.map(fill_row, (x0, obs), batch_size=batch_size)
 
 
+@_full_precision_methods
 class NipalsPCA(BaseEstimator, TransformerMixin):
     """JAX-accelerated PCA using the NIPALS algorithm.
 
@@ -308,7 +321,9 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                     "the model is not usable"
                 )
             elif num_iter >= self.max_iter:
-                warnings.warn(f"max_iter reached on LV {fitted_components + i}")
+                warnings.warn(
+                    f"max_iter reached on LV {fitted_components + i}"
+                )
 
         if fitted_components == 0:
             self.fit_scores = scores
@@ -420,7 +435,8 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
         else:
             raise ValueError(
-                "method must be one of " "{'naive','projection','conditional_mean'}"
+                "method must be one of "
+                "{'naive','projection','conditional_mean'}"
             )
 
         return np.asarray(scores, dtype=np.float64)
@@ -454,7 +470,9 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
         return self
 
-    def fit_transform(self, X: np.ndarray, verbose: bool = False) -> np.ndarray:
+    def fit_transform(
+        self, X: np.ndarray, verbose: bool = False
+    ) -> np.ndarray:
         """Fit, then transform input data.
 
         Args:
@@ -472,7 +490,9 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
             self.fit(X, verbose=verbose)
             return self.fit_scores.copy()
         else:
-            raise ValueError("Model has already been fit. Try transform instead.")
+            raise ValueError(
+                "Model has already been fit. Try transform instead."
+            )
 
     def inverse_transform(self, X: np.ndarray) -> np.ndarray:
         """Approximate original data from scores.
@@ -546,16 +566,22 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                 warnings.warn(
                     "Both Scores and Data are given. Operating on Data alone."
                 )
-                out_t2 = self.calc_imd(input_array=input_array, covariance=covariance)
+                out_t2 = self.calc_imd(
+                    input_array=input_array, covariance=covariance
+                )
 
             elif (input_scores is None) and (input_array is not None):
                 scores = self.transform(input_array)
-                out_t2 = self.calc_imd(input_scores=scores, covariance=covariance)
+                out_t2 = self.calc_imd(
+                    input_scores=scores, covariance=covariance
+                )
 
             else:
                 # Use JAX for vectorized computation
                 scores_jax = jnp.array(input_scores)
-                fit_scores_jax = jnp.array(self.fit_scores[:, : self.n_components])
+                fit_scores_jax = jnp.array(
+                    self.fit_scores[:, : self.n_components]
+                )
 
                 _, num_lvs = scores_jax.shape
                 num_lvs_fit = self.n_components
@@ -578,15 +604,19 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                     cov_matrix = jnp.cov(fit_scores_jax.T, ddof=1)
                     cov_inv = jnp.linalg.pinv(cov_matrix)
                     diff = scores_jax - fit_means
-                    out_t2 = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(-1, 1)
+                    out_t2 = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
+                        -1, 1
+                    )
                 elif covariance == "ledoit_wolf":
                     # Compute full covariance matrix with Ledoit-Wolf shrinkage
-                    lw_obj = LedoitWolf(assume_centered=self.mean_centered).fit(
-                        np.array(fit_scores_jax)
-                    )
+                    lw_obj = LedoitWolf(
+                        assume_centered=self.mean_centered
+                    ).fit(np.array(fit_scores_jax))
                     cov_inv = jnp.linalg.pinv(jnp.array(lw_obj.covariance_))
                     diff = scores_jax - fit_means
-                    out_t2 = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(-1, 1)
+                    out_t2 = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
+                        -1, 1
+                    )
                 else:
                     raise NotImplementedError(
                         f"Covariance method {covariance} not implemented. "
@@ -594,11 +624,15 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                     )
                 out_t2 = np.array(out_t2)
         else:
-            raise NotImplementedError("This metric has not been implemented. See doc.")
+            raise NotImplementedError(
+                "This metric has not been implemented. See doc."
+            )
 
         return out_t2
 
-    def calc_oomd(self, input_array: np.ndarray, metric: str = "QRes") -> np.ndarray:
+    def calc_oomd(
+        self, input_array: np.ndarray, metric: str = "QRes"
+    ) -> np.ndarray:
         """Calculate out-of-model distance (Q-residuals or DModX).
 
         Args:
@@ -727,7 +761,9 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
             bool: Whether or not the data is mean-centered.
         """
         with warnings.catch_warnings():
-            warnings.filterwarnings(action="ignore", message="Mean of empty slice")
+            warnings.filterwarnings(
+                action="ignore", message="Mean of empty slice"
+            )
             try:
                 maxmean = np.nanmax(np.abs(np.nanmean(data, axis=0)))
             except RuntimeWarning:

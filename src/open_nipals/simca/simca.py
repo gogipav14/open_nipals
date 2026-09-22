@@ -794,7 +794,10 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         # all the variation: DModX would measure numerical noise. NIPALS
         # can also run out of variation mid-fit and return NaN loadings.
         data_scale = float(np.sqrt(np.nanmean(X_centered**2)))
-        tolerance = np.sqrt(self._compute_eps())
+        # Rounding leaves residuals of about eps (measured ~0.2 eps for
+        # an exhausted rank); 100 eps separates that from real noise,
+        # which in float32 can be as small as 1e-4 of the data scale
+        tolerance = 100 * self._compute_eps()
         fit_failed = not (
             np.all(np.isfinite(np.asarray(pca.loadings))) and np.isfinite(s0)
         )

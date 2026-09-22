@@ -544,3 +544,28 @@ class TestJAXSIMCAReviewRound15:
             assert model.class_models_[0].n_components == 1
         finally:
             jax.config.update("jax_enable_x64", True)
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+class TestJAXSIMCAReviewRound17:
+    def test_float32_keeps_small_but_real_residuals(self):
+        """Noise at 1e-4 of the scale is resolvable in float32."""
+        from open_nipals.simca import SIMCA as SIMCA_NP
+
+        rng = np.random.default_rng(42)
+        X = rng.normal(size=(100, 1)) + 1e-4 * rng.normal(size=(100, 8))
+        y = np.zeros(100, dtype=int)
+        reference = SIMCA_NP(n_components=1).fit(X, y)
+
+        jax.config.update("jax_enable_x64", False)
+        try:
+            model = SIMCA_JAX(n_components=1).fit(X, y)
+            auto = SIMCA_JAX(n_components="auto", component_selection="r2")
+            auto.fit(X, y)
+        finally:
+            jax.config.update("jax_enable_x64", True)
+
+        assert model.class_models_[0].s0 == pytest.approx(
+            reference.class_models_[0].s0, rel=1e-3
+        )
+        assert np.isfinite(auto.class_models_[0].s0)

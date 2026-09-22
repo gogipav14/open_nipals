@@ -36,7 +36,12 @@ from sklearn.covariance import LedoitWolf
 import warnings
 from functools import partial
 from open_nipals.jax.nipalsPCA import _start_column
-from open_nipals.jax.utils import _masked_mult, _resolve_dtype, _split_nan
+from open_nipals.jax.utils import (
+    _full_precision_methods,
+    _masked_mult,
+    _resolve_dtype,
+    _split_nan,
+)
 from typing import Optional, Tuple, Union
 
 
@@ -176,6 +181,7 @@ def _transform_components(
     return scores.T
 
 
+@_full_precision_methods
 class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
     """JAX-accelerated PLS using the NIPALS algorithm.
 
@@ -260,7 +266,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             if self.force_include:
                 warnings.warn("Rows still included due to force_include.")
             else:
-                warnings.warn("Rows with all NaNs in Y are dropped, see force_include.")
+                warnings.warn(
+                    "Rows with all NaNs in Y are dropped, see force_include."
+                )
                 rows_to_keep = np.invert(y_nan_rows)
                 y = y[rows_to_keep, :]
                 X = X[rows_to_keep, :]
@@ -320,18 +328,23 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
         for i, iter_count in enumerate(np.asarray(iter_counts)):
             if verbose:
-                print(f"LV {fitted_components + i} took {iter_count} iterations")
+                print(
+                    f"LV {fitted_components + i} took {iter_count} iterations"
+                )
             if not np.all(np.isfinite(np.asarray(p)[:, i])):
                 warnings.warn(
                     f"Non-finite values on LV {fitted_components + i}, "
                     "the model is not usable"
                 )
             elif iter_count >= self.max_iter:
-                warnings.warn(f"max_iter reached on LV {fitted_components + i}.")
+                warnings.warn(
+                    f"max_iter reached on LV {fitted_components + i}."
+                )
 
         # Results live in numpy, like the rest of the sklearn ecosystem
         t, p, w, u, q, b_diag = (
-            np.asarray(arr, dtype=np.float64) for arr in (t, p, w, u, q, b_diag)
+            np.asarray(arr, dtype=np.float64)
+            for arr in (t, p, w, u, q, b_diag)
         )
         n_total = fitted_components + n_add
         b = np.zeros((n_total, n_total))
@@ -444,10 +457,14 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             raise NotFittedError("Model has not yet been fit.")
 
         if y is None:
-            scores_x = self._transform_xy(X, self.loadings_x, weights=self.weights_x)
+            scores_x = self._transform_xy(
+                X, self.loadings_x, weights=self.weights_x
+            )
             return scores_x
         else:
-            scores_x = self._transform_xy(X, self.loadings_x, weights=self.weights_x)
+            scores_x = self._transform_xy(
+                X, self.loadings_x, weights=self.weights_x
+            )
             scores_y = self._transform_xy(y, self.loadings_y)
             return scores_x, scores_y
 
@@ -493,7 +510,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
     def _check_mean_centered(self, data: np.ndarray) -> bool:
         """Check if data is mean centered."""
         with warnings.catch_warnings():
-            warnings.filterwarnings(action="ignore", message="Mean of empty slice")
+            warnings.filterwarnings(
+                action="ignore", message="Mean of empty slice"
+            )
             try:
                 maxmean = np.nanmax(np.abs(np.nanmean(data, axis=0)))
             except RuntimeWarning:
@@ -520,7 +539,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             self.fit(X, y)
             return self.fit_scores_x, self.fit_scores_y
         else:
-            raise ValueError("Model has already been fit. Try transform instead.")
+            raise ValueError(
+                "Model has already been fit. Try transform instead."
+            )
 
     def calc_imd(
         self,
@@ -554,7 +575,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
         if input_array is not None:
             if input_scores is not None:
-                warnings.warn("Both Scores and Data given. Operating on Data alone.")
+                warnings.warn(
+                    "Both Scores and Data given. Operating on Data alone."
+                )
             scores = self.transform(X=input_array)
         elif input_scores is not None:
             scores = input_scores
@@ -584,7 +607,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
                 cov_matrix = jnp.cov(fit_scores_jax.T, ddof=1)
                 cov_inv = jnp.linalg.pinv(cov_matrix)
                 diff = scores_jax - fit_means
-                out_imd = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(-1, 1)
+                out_imd = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
+                    -1, 1
+                )
             elif covariance == "ledoit_wolf":
                 # Compute full covariance matrix with Ledoit-Wolf shrinkage
                 lw_obj = LedoitWolf(assume_centered=self.mean_centered).fit(
@@ -592,7 +617,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
                 )
                 cov_inv = jnp.linalg.pinv(jnp.array(lw_obj.covariance_))
                 diff = scores_jax - fit_means
-                out_imd = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(-1, 1)
+                out_imd = jnp.sum((diff @ cov_inv) * diff, axis=1).reshape(
+                    -1, 1
+                )
             else:
                 raise NotImplementedError(
                     f"Covariance method {covariance} not implemented. "
@@ -601,7 +628,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
             return np.array(out_imd)
         else:
-            raise ValueError("Unknown metric requested (metric = HotellingT2).")
+            raise ValueError(
+                "Unknown metric requested (metric = HotellingT2)."
+            )
 
     def inverse_transform(self, X: np.ndarray) -> np.ndarray:
         """Transform scores back to simulated data.
@@ -635,7 +664,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
         return np.array(out_data_x)
 
-    def calc_oomd(self, input_array: np.ndarray, metric: str = "QRes") -> np.ndarray:
+    def calc_oomd(
+        self, input_array: np.ndarray, metric: str = "QRes"
+    ) -> np.ndarray:
         """Calculate Out of Model Distance.
 
         Args:
@@ -684,7 +715,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
 
         return out_oomd
 
-    def predict(self, X: np.ndarray = None, scores_x: np.ndarray = None) -> np.ndarray:
+    def predict(
+        self, X: np.ndarray = None, scores_x: np.ndarray = None
+    ) -> np.ndarray:
         """Predict y from data or scores.
 
         Args:

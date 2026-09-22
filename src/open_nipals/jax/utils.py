@@ -11,11 +11,36 @@ JAX conversion 2024
 import jax
 import jax.numpy as jnp
 import numpy as np
-from functools import partial
+from functools import partial, wraps
 from typing import Optional, Tuple
 
 # Relative convergence tests below this are dominated by float32 rounding
 FLOAT32_MIN_TOL = 1e-5
+
+
+def _full_precision(fn):
+    """Run fn with full-precision matrix products.
+
+    On GPUs JAX's default float32 matmul may use TF32 (about 1e-4
+    relative error instead of 1e-7), which would make dtype="float32"
+    agree with NumPy to only three or four digits. The setting is part of
+    JAX's jit cache key, so compiled code is traced at full precision.
+    """
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        with jax.default_matmul_precision("highest"):
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _full_precision_methods(cls):
+    """Apply _full_precision to every public method of a model class."""
+    for name, attr in list(vars(cls).items()):
+        if not name.startswith("_") and callable(attr):
+            setattr(cls, name, _full_precision(attr))
+    return cls
 
 
 def _resolve_dtype(
@@ -149,4 +174,5 @@ def _nan_mult(
     x0 = jnp.where(nan_mask, 0.0, x)
     obs = _obs_mask(nan_mask, x.dtype)
 
-    return _masked_mult(x0, obs, y, use_denom=use_denom)
+    with jax.default_matmul_precision("highest"):
+        return _masked_mult(x0, obs, y, use_denom=use_denom)
