@@ -223,7 +223,7 @@ class ComponentSelector:
         return max(1, n_above)  # At least 1 component
 
 
-class SIMCA(BaseEstimator, ClassifierMixin):
+class SIMCA(ClassifierMixin, BaseEstimator):
     """
     SIMCA (Soft Independent Modelling of Class Analogy) classifier.
 
@@ -596,6 +596,8 @@ class SIMCA(BaseEstimator, ClassifierMixin):
 
         if X.shape[0] != y.shape[0]:
             raise ValueError("X and y must have same number of samples")
+        if X.shape[0] == 0:
+            raise ValueError("Cannot fit SIMCA on zero samples")
 
         if not (
             isinstance(self.n_components, (int, np.integer))

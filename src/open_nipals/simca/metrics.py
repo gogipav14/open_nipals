@@ -13,6 +13,39 @@ if TYPE_CHECKING:
     from open_nipals.nipalsPLS import NipalsPLS
 
 
+def _r2(
+    observed_values: np.ndarray, predicted: np.ndarray, per_variable: bool
+) -> Union[float, np.ndarray]:
+    """
+    R² = 1 - SS_res / SS_tot over the observed (non-NaN) entries.
+
+    Missing observations are left out. A non-finite prediction for an
+    observed value is a calculation failure and gives -inf (for that
+    column with per_variable, overall otherwise), following calc_press.
+    """
+    observed_values = np.asarray(observed_values, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    observed = ~np.isnan(observed_values)
+    failed = observed & ~np.isfinite(predicted)
+    valid = observed & ~failed
+
+    residuals = np.zeros(observed_values.shape, dtype=float)
+    residuals[valid] = observed_values[valid] - predicted[valid]
+    totals = np.where(observed, observed_values, 0.0)
+
+    if per_variable:
+        ss_res = np.sum(residuals**2, axis=0)
+        ss_tot = np.sum(totals**2, axis=0)
+        r2 = 1.0 - ss_res / np.where(ss_tot == 0, 1.0, ss_tot)
+        return np.where(np.any(failed, axis=0), -np.inf, r2)
+    if np.any(failed):
+        return -np.inf
+    ss_tot = np.sum(totals**2)
+    if ss_tot == 0:
+        return 0.0
+    return float(1.0 - np.sum(residuals**2) / ss_tot)
+
+
 def calc_r2_x(
     X: np.ndarray, X_reconstructed: np.ndarray, per_variable: bool = False
 ) -> Union[float, np.ndarray]:
@@ -34,29 +67,9 @@ def calc_r2_x(
     -------
     float or np.ndarray
         R² value(s). Float if per_variable=False, array if per_variable=True.
+        -inf where the reconstruction of an observed value is not finite.
     """
-    # Handle NaN values - only use non-NaN pairs
-    nan_mask = np.isnan(X) | np.isnan(X_reconstructed)
-    X_clean = np.where(nan_mask, 0.0, X)
-    X_rec_clean = np.where(nan_mask, 0.0, X_reconstructed)
-    valid_count = (~nan_mask).astype(float)
-
-    residuals = X_clean - X_rec_clean
-
-    if per_variable:
-        # Per-variable R²
-        ss_res = np.sum(residuals**2, axis=0)
-        ss_tot = np.sum(X_clean**2, axis=0)
-        # Avoid division by zero
-        ss_tot = np.where(ss_tot == 0, 1.0, ss_tot)
-        return 1.0 - (ss_res / ss_tot)
-    else:
-        # Overall R²
-        ss_res = np.sum(residuals**2)
-        ss_tot = np.sum(X_clean**2)
-        if ss_tot == 0:
-            return 0.0
-        return 1.0 - (ss_res / ss_tot)
+    return _r2(X, X_reconstructed, per_variable)
 
 
 def calc_r2_y(
@@ -79,32 +92,16 @@ def calc_r2_y(
     Returns
     -------
     float or np.ndarray
-        R² value(s).
+        R² value(s). -inf where the prediction of an observed value is
+        not finite.
     """
-    # Ensure 2D
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
     if y_true.ndim == 1:
         y_true = y_true.reshape(-1, 1)
     if y_pred.ndim == 1:
         y_pred = y_pred.reshape(-1, 1)
-
-    # Handle NaN
-    nan_mask = np.isnan(y_true) | np.isnan(y_pred)
-    y_true_clean = np.where(nan_mask, 0.0, y_true)
-    y_pred_clean = np.where(nan_mask, 0.0, y_pred)
-
-    residuals = y_true_clean - y_pred_clean
-
-    if per_variable:
-        ss_res = np.sum(residuals**2, axis=0)
-        ss_tot = np.sum(y_true_clean**2, axis=0)
-        ss_tot = np.where(ss_tot == 0, 1.0, ss_tot)
-        return 1.0 - (ss_res / ss_tot)
-    else:
-        ss_res = np.sum(residuals**2)
-        ss_tot = np.sum(y_true_clean**2)
-        if ss_tot == 0:
-            return 0.0
-        return 1.0 - (ss_res / ss_tot)
+    return _r2(y_true, y_pred, per_variable)
 
 
 def calc_r2_cumulative_pca(model: "NipalsPCA", X: np.ndarray) -> np.ndarray:
@@ -126,12 +123,17 @@ def calc_r2_cumulative_pca(model: "NipalsPCA", X: np.ndarray) -> np.ndarray:
     n_components = model.loadings.shape[1]
     r2_values = np.zeros(n_components)
 
-    for i in range(1, n_components + 1):
-        # Use first i components for reconstruction
-        scores = model.transform(X)[:, :i]
-        loadings = model.loadings[:, :i]
-        X_reconstructed = scores @ loadings.T
-        r2_values[i - 1] = calc_r2_x(X, X_reconstructed)
+    # transform() only returns the active components, so activate each
+    # count in turn (the loadings exist, nothing is refitted)
+    original_n_components = model.n_components
+    try:
+        for i in range(1, n_components + 1):
+            model.n_components = i
+            scores = model.transform(X)
+            X_reconstructed = scores @ model.loadings[:, :i].T
+            r2_values[i - 1] = calc_r2_x(X, X_reconstructed)
+    finally:
+        model.n_components = original_n_components
 
     return r2_values
 
@@ -162,14 +164,14 @@ def calc_r2_cumulative_pls(
     # Store original n_components
     original_n_components = model.n_components
 
-    for i in range(1, n_components + 1):
-        # Temporarily set number of components
-        model.n_components = i
-        y_pred = model.predict(X)
-        r2_values[i - 1] = calc_r2_y(y, y_pred)
-
-    # Restore original n_components
-    model.n_components = original_n_components
+    try:
+        for i in range(1, n_components + 1):
+            # Temporarily set number of components
+            model.n_components = i
+            y_pred = model.predict(X)
+            r2_values[i - 1] = calc_r2_y(y, y_pred)
+    finally:
+        model.n_components = original_n_components
 
     return r2_values
 

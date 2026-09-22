@@ -890,3 +890,66 @@ class TestSIMCAReviewRound4:
         rejecting = SIMCA(n_components=2, unknown_handling="reject").fit(X, y)
         far_away = np.full((2, X.shape[1]), 1e3)
         assert rejecting.predict(far_away).dtype == object
+
+
+class TestSIMCAReviewRound5:
+    """Findings of the fifth adversarial review."""
+
+    def test_is_a_sklearn_classifier(self, two_class_data):
+        from sklearn.base import clone, is_classifier
+        from sklearn.metrics import get_scorer
+
+        X, y = two_class_data
+        assert is_classifier(SIMCA())
+        model = clone(SIMCA(n_components=2)).fit(X, y)
+        assert get_scorer("accuracy")(model, X, y) > 0.8
+
+    def test_empty_refit_keeps_previous_model(self, two_class_data):
+        X, y = two_class_data
+        model = SIMCA(n_components=2).fit(X, y)
+        before = list(model.predict(X))
+
+        with pytest.raises(ValueError, match="zero samples"):
+            model.fit(np.empty((0, X.shape[1])), np.empty(0, dtype=y.dtype))
+
+        assert len(model.class_models_) == len(np.unique(y))
+        assert list(model.predict(X)) == before
+
+
+class TestMetricsReviewRound5:
+    """R² must not reward failed predictions or crash on reduced models."""
+
+    def test_r2_failed_prediction_is_minus_inf(self):
+        from open_nipals.simca.metrics import calc_r2_x, calc_r2_y
+
+        y_true = np.array([[1.0, -1.0], [-1.0, 1.0], [0.5, -0.5]])
+        y_pred = y_true.copy()
+        y_pred[:, 1] = np.nan  # the second column failed entirely
+
+        assert calc_r2_y(y_true, y_pred) == -np.inf
+        per_var = calc_r2_y(y_true, y_pred, per_variable=True)
+        assert per_var[0] == pytest.approx(1.0)
+        assert per_var[1] == -np.inf
+        assert calc_r2_x(y_true, y_pred) == -np.inf
+
+    def test_r2_ignores_missing_observations_only(self):
+        from open_nipals.simca.metrics import calc_r2_y
+
+        y_true = np.array([[1.0, np.nan], [-1.0, 1.0], [0.5, -1.0]])
+        y_pred = np.where(np.isnan(y_true), 123.0, y_true)  # anything there
+
+        assert calc_r2_y(y_true, y_pred) == pytest.approx(1.0)
+
+    def test_cumulative_r2_after_reducing_components(self, two_class_data):
+        from open_nipals.simca.metrics import calc_r2_cumulative_pca
+
+        X, _ = two_class_data
+        X = X - X.mean(axis=0)
+        pca = NipalsPCA(n_components=3).fit(X)
+        expected = calc_r2_cumulative_pca(pca, X)
+
+        pca.set_components(1)
+        r2 = calc_r2_cumulative_pca(pca, X)
+
+        np.testing.assert_allclose(r2, expected)
+        assert pca.n_components == 1  # restored

@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 from typing import Optional, Union, TYPE_CHECKING
 
+from open_nipals.simca import metrics as _np_metrics
+
 if TYPE_CHECKING:
     from open_nipals.jax.nipalsPCA import NipalsPCA
     from open_nipals.jax.nipalsPLS import NipalsPLS
@@ -15,118 +17,30 @@ if TYPE_CHECKING:
 
 def calc_r2_x(
     X: jnp.ndarray, X_reconstructed: jnp.ndarray, per_variable: bool = False
-) -> Union[float, jnp.ndarray]:
-    """
-    Calculate R² for X-block (explained variance) using JAX.
-
-    R² = 1 - (SS_residual / SS_total)
-
-    Parameters
-    ----------
-    X : jnp.ndarray
-        Original data matrix (n_samples, n_features).
-    X_reconstructed : jnp.ndarray
-        Reconstructed data matrix from model.
-    per_variable : bool, default=False
-        If True, return R² for each variable.
-
-    Returns
-    -------
-    float or jnp.ndarray
-        R² value(s).
-    """
-    X = jnp.asarray(X)
-    X_reconstructed = jnp.asarray(X_reconstructed)
-
-    nan_mask = jnp.isnan(X) | jnp.isnan(X_reconstructed)
-    X_clean = jnp.where(nan_mask, 0.0, X)
-    X_rec_clean = jnp.where(nan_mask, 0.0, X_reconstructed)
-
-    residuals = X_clean - X_rec_clean
-
-    if per_variable:
-        ss_res = jnp.sum(residuals**2, axis=0)
-        ss_tot = jnp.sum(X_clean**2, axis=0)
-        ss_tot = jnp.where(ss_tot == 0, 1.0, ss_tot)
-        return 1.0 - (ss_res / ss_tot)
-    else:
-        ss_res = jnp.sum(residuals**2)
-        ss_tot = jnp.sum(X_clean**2)
-        return float(jnp.where(ss_tot == 0, 0.0, 1.0 - (ss_res / ss_tot)))
+) -> Union[float, np.ndarray]:
+    """R² for the X-block, see open_nipals.simca.metrics.calc_r2_x."""
+    return _np_metrics.calc_r2_x(
+        np.asarray(X), np.asarray(X_reconstructed), per_variable
+    )
 
 
 def calc_r2_y(
     y_true: jnp.ndarray, y_pred: jnp.ndarray, per_variable: bool = False
-) -> Union[float, jnp.ndarray]:
-    """
-    Calculate R² for Y-block (prediction explained variance) using JAX.
-
-    Parameters
-    ----------
-    y_true : jnp.ndarray
-        True Y values.
-    y_pred : jnp.ndarray
-        Predicted Y values.
-    per_variable : bool, default=False
-        If True, return R² for each Y variable.
-
-    Returns
-    -------
-    float or jnp.ndarray
-        R² value(s).
-    """
-    y_true = jnp.asarray(y_true)
-    y_pred = jnp.asarray(y_pred)
-
-    if y_true.ndim == 1:
-        y_true = y_true.reshape(-1, 1)
-    if y_pred.ndim == 1:
-        y_pred = y_pred.reshape(-1, 1)
-
-    nan_mask = jnp.isnan(y_true) | jnp.isnan(y_pred)
-    y_true_clean = jnp.where(nan_mask, 0.0, y_true)
-    y_pred_clean = jnp.where(nan_mask, 0.0, y_pred)
-
-    residuals = y_true_clean - y_pred_clean
-
-    if per_variable:
-        ss_res = jnp.sum(residuals**2, axis=0)
-        ss_tot = jnp.sum(y_true_clean**2, axis=0)
-        ss_tot = jnp.where(ss_tot == 0, 1.0, ss_tot)
-        return 1.0 - (ss_res / ss_tot)
-    else:
-        ss_res = jnp.sum(residuals**2)
-        ss_tot = jnp.sum(y_true_clean**2)
-        return float(jnp.where(ss_tot == 0, 0.0, 1.0 - (ss_res / ss_tot)))
+) -> Union[float, np.ndarray]:
+    """R² for the Y-block, see open_nipals.simca.metrics.calc_r2_y."""
+    return _np_metrics.calc_r2_y(
+        np.asarray(y_true), np.asarray(y_pred), per_variable
+    )
 
 
 def calc_r2_cumulative_pca(model: "NipalsPCA", X: jnp.ndarray) -> np.ndarray:
     """
-    Calculate cumulative R² for each component in a PCA model.
+    Cumulative R² per component of a JAX PCA model.
 
-    Parameters
-    ----------
-    model : NipalsPCA
-        Fitted JAX PCA model.
-    X : jnp.ndarray
-        Data matrix used for fitting.
-
-    Returns
-    -------
-    np.ndarray
-        Cumulative R² values, one per component.
+    The JAX model's transform() returns NumPy arrays, so the reference
+    implementation applies unchanged.
     """
-    X = jnp.asarray(X)
-    n_components = model.loadings.shape[1]
-    r2_values = np.zeros(n_components)
-
-    for i in range(1, n_components + 1):
-        scores = model.transform(X)[:, :i]
-        loadings = model.loadings[:, :i]
-        X_reconstructed = scores @ loadings.T
-        r2_values[i - 1] = calc_r2_x(X, X_reconstructed)
-
-    return r2_values
+    return _np_metrics.calc_r2_cumulative_pca(model, np.asarray(X))
 
 
 def calc_r2_cumulative_pls(

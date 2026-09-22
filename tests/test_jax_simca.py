@@ -467,3 +467,33 @@ class TestJAXSIMCAReviewRound4:
         X, y = two_class_data
         model = SIMCA_JAX(n_components=2).fit(X, y)
         assert model.predict(X).dtype == np.asarray(y).dtype
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+class TestJAXSIMCAReviewRound5:
+    """The JAX classifier and metrics inherit the fifth-review fixes."""
+
+    def test_is_a_sklearn_classifier(self):
+        from sklearn.base import is_classifier
+
+        assert is_classifier(SIMCA_JAX())
+
+    def test_r2_failed_prediction_is_minus_inf(self):
+        from open_nipals.jax.simca.metrics import calc_r2_x
+
+        X = np.array([[1.0, -1.0], [-1.0, 1.0]])
+        X_rec = X.copy()
+        X_rec[0, 0] = np.nan
+        assert calc_r2_x(X, X_rec) == -np.inf
+
+    def test_cumulative_r2_after_reducing_components(self, two_class_data):
+        from open_nipals.jax import NipalsPCA as NipalsPCA_JAX
+        from open_nipals.jax.simca.metrics import calc_r2_cumulative_pca
+
+        X, _ = two_class_data
+        X = X - X.mean(axis=0)
+        pca = NipalsPCA_JAX(n_components=3).fit(X)
+        expected = calc_r2_cumulative_pca(pca, X)
+        pca.set_components(1)
+        np.testing.assert_allclose(calc_r2_cumulative_pca(pca, X), expected)
+        assert pca.n_components == 1
