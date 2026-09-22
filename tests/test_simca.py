@@ -717,11 +717,31 @@ class TestSIMCAReviewRound3:
 
     def test_cv_constant_decimal_column(self):
         """Same guard inside the cross-validation scaling."""
-        from open_nipals.simca.cross_validation import _class_std
+        from open_nipals.simca.cross_validation import _class_statistics
 
         X = np.full((10, 3), 0.1)
         X[:, 0] = np.arange(10)
-        np.testing.assert_array_equal(_class_std(X)[1:], 1.0)
+        mean, std = _class_statistics(X, scale=True)
+        np.testing.assert_array_equal(std[1:], 1.0)
+        np.testing.assert_array_equal(mean[1:], 0.1)
+
+    @pytest.mark.parametrize("scale", [True, False])
+    def test_large_constant_column_leaves_no_residual(self, scale):
+        """Centring a constant 1.8e18 column must not leave rounding error."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(20, 4))
+        X[:, 1] = 1.783098331888911e18
+        y = np.array([0] * 10 + [1] * 10)
+
+        model = SIMCA(n_components=1, scale=scale).fit(X, y)
+
+        for class_model in model.class_models_.values():
+            fit_data = np.asarray(class_model.pca_model.fit_data)
+            assert np.all(fit_data[:, 1] == 0.0)
+        distances = model.get_distances(X)
+        assert np.all(np.isfinite(distances["t2"]))
+        assert np.all(np.isfinite(distances["dmodx"]))
+        assert all(p is not None for p in model.predict(X))
 
     def test_autoscaling_is_unit_invariant(self, two_class_data):
         """Rescaling a feature (even by 1e-14) must not change predictions."""

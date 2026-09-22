@@ -189,22 +189,45 @@ def _element_groups(n_rows: int, n_cols: int, n_groups: int) -> np.ndarray:
     return (rows + cols) % n_groups
 
 
-def _class_std(X: np.ndarray) -> np.ndarray:
+def _class_statistics(
+    X: np.ndarray, scale: bool
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Column standard deviations (ddof=1), constant columns give 1.
+    Centre and scale vectors of a class, as used by SIMCA.
 
-    A column is constant when all its observed values are identical.
-    The standard deviation of a column of identical decimals such as
-    0.1 is ~1e-17 rather than 0 (rounding in the mean), and dividing by
-    that would turn the rounding noise into a full-variance feature.
-    Any genuine variation, however small in absolute terms, is kept.
+    Constant columns (all observed values identical) are centred on
+    that value, not on np.nanmean, whose rounding error is not zero
+    (256 for identical values of 1.8e18) and would otherwise be left
+    as a spurious residual. Their scale is 1 instead of the ~1e-17
+    standard deviation that rounding produces for identical decimals,
+    which would turn the noise into a full-variance feature. Any
+    genuine variation, however small, is kept.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Training rows of one class.
+    scale : bool
+        Return the standard deviations (ddof=1), otherwise all ones.
+
+    Returns
+    -------
+    mean : np.ndarray
+        Centre per column.
+    std : np.ndarray
+        Scale per column.
     """
-    std = np.nanstd(X, axis=0, ddof=1)
     with warnings.catch_warnings():
         # all-NaN columns are constant too, no need for the warning
         warnings.simplefilter("ignore", RuntimeWarning)
-        constant = np.nanmax(X, axis=0) == np.nanmin(X, axis=0)
-    return np.where(constant, 1.0, std)
+        upper = np.nanmax(X, axis=0)
+        constant = upper == np.nanmin(X, axis=0)
+        mean = np.where(constant, upper, np.nanmean(X, axis=0))
+    if scale:
+        std = np.where(constant, 1.0, np.nanstd(X, axis=0, ddof=1))
+    else:
+        std = np.ones(X.shape[1])
+    return mean, std
 
 
 def cross_val_press_pca(
@@ -279,8 +302,7 @@ def cross_val_press_pca(
 
         # Preprocessing is fitted on the training part of the fold only
         X_train = X[train_idx]
-        mean = np.nanmean(X_train, axis=0)
-        std = _class_std(X_train) if scale else 1.0
+        mean, std = _class_statistics(X_train, scale)
         X_train = (X_train - mean) / std
         X_val = (X[test_idx] - mean) / std
 

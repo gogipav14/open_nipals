@@ -409,6 +409,7 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
 
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
 class TestJAXSIMCAReviewRound3:
     """The JAX wrapper inherits the third-review fixes."""
 

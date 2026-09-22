@@ -22,7 +22,7 @@ from sklearn.exceptions import NotFittedError
 
 from open_nipals.nipalsPCA import NipalsPCA
 from .metrics import calc_r2_cumulative_pca, calc_q2_cumulative_pca
-from .cross_validation import KFoldCV, _class_std
+from .cross_validation import KFoldCV, _class_statistics
 
 
 @dataclass
@@ -617,11 +617,7 @@ class SIMCA(BaseEstimator, ClassifierMixin):
 
             # Each class model describes the variation around its own
             # mean, in units of its own standard deviation if scale is set
-            class_mean = np.nanmean(X_class, axis=0)
-            if self.scale:
-                class_std = _class_std(X_class)
-            else:
-                class_std = np.ones(n_features)
+            class_mean, class_std = _class_statistics(X_class, self.scale)
             X_centered = (X_class - class_mean) / class_std
 
             # Select and validate the number of components
