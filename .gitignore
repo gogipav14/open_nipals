@@ -53,3 +53,6 @@ MANIFEST
 # Per-project virtualenvs
 .venv*/
 .conda*/
+
+# SIMCA / mdatools validation intermediate artifacts
+validation/simca_mdatools/out/
