@@ -9,6 +9,64 @@ Environment used: R 4.3.3, `mdatools` 0.16.0 (`R_LIBS_USER` library),
 Python numpy 2.4.3 / scipy 1.17.1 / scikit-learn 1.6.1 / pandas 2.2.3,
 open_nipals at commit `686977a`.
 
+> **Rerun after commit 45335be (per-class autoscaling, core DModX limit).**
+> The sections below were written against commit 686977a, where
+>  used one global . That design was
+> replaced by per-class autoscaling (each class centred and scaled by its
+> own calibration mean and sd, ddof=1, as SIMCA-P and mdatools do), and
+> the DModX limit is now  instead of
+> a separate  function. Parts A and B are unchanged (they
+> were already definition-matched). Part C's  column is now
+> identical to  in every cell, and the counts moved onto
+> mdatools' numbers, e.g. Wine class_0 calibration 27/30 (was 30/30) and
+> class_1 model on class_0 test rows 5/29 (was 8/29). Discrepancy 3 below
+> is therefore resolved. Regenerated tables:
+
+```
+--- iris ---
+model_class eval_set true_class  n_total  R_chisq  R_ddmoments  R_jm  open_nipals_class_prescaled  open_nipals_native
+     setosa      cal     setosa       25     22.0         24.0  23.0                         24.0                24.0
+     setosa     test     setosa       25     21.0         21.0  21.0                         21.0                21.0
+     setosa     test versicolor       25      0.0          0.0   0.0                          0.0                 0.0
+     setosa     test  virginica       25      0.0          0.0   0.0                          0.0                 0.0
+ versicolor      cal versicolor       25     24.0         25.0  24.0                         24.0                24.0
+ versicolor     test     setosa       25      0.0          0.0   0.0                          0.0                 0.0
+ versicolor     test versicolor       25     24.0         25.0  24.0                         25.0                25.0
+ versicolor     test  virginica       25      3.0          3.0   2.0                          4.0                 4.0
+  virginica      cal  virginica       25     24.0         24.0  24.0                         25.0                25.0
+  virginica     test     setosa       25      0.0          0.0   0.0                          0.0                 0.0
+  virginica     test versicolor       25      1.0          2.0   1.0                          3.0                 3.0
+  virginica     test  virginica       25     21.0         21.0  21.0                         21.0                21.0
+
+--- wine ---
+model_class eval_set true_class  n_total  R_chisq  R_ddmoments  R_jm  open_nipals_class_prescaled  open_nipals_native
+    class_0      cal    class_0       30     27.0         28.0  27.0                         27.0                27.0
+    class_0     test    class_0       29     21.0         21.0  21.0                         21.0                21.0
+    class_0     test    class_1       35      0.0          0.0   0.0                          0.0                 0.0
+    class_0     test    class_2       24      0.0          0.0   0.0                          0.0                 0.0
+    class_1      cal    class_1       36     30.0         33.0  30.0                         30.0                30.0
+    class_1     test    class_0       29      5.0          5.0   5.0                          5.0                 5.0
+    class_1     test    class_1       35     29.0         31.0  29.0                         32.0                32.0
+    class_1     test    class_2       24      1.0          1.0   1.0                          1.0                 1.0
+    class_2      cal    class_2       24     21.0         24.0  23.0                         23.0                23.0
+    class_2     test    class_0       29      0.0          0.0   0.0                          0.0                 0.0
+    class_2     test    class_1       35      0.0          0.0   0.0                          0.0                 0.0
+    class_2     test    class_2       24     22.0         23.0  23.0                         24.0                24.0
+
+D. Multi-class membership agreement (Wine, simcam vs get_class_membership)
+==============================================================================
+
+--- iris ---
+  samples compared: 150
+  per-class-membership cell agreement: 435/450 (96.7%)
+  full membership-vector agreement:     135/150 (90.0%)
+
+--- wine ---
+  samples compared: 178
+  per-class-membership cell agreement: 522/534 (97.8%)
+  full membership-vector agreement:     166/178 (93.3%)
+```
+
 ## How to reproduce
 
 ```bash

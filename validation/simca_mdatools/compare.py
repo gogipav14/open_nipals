@@ -131,7 +131,7 @@ def compare_classification_counts():
     print("   R lim.type in {ddmoments, jm, chisq}, alpha=0.05 (mdatools)")
     print("   open_nipals: SIMCA-P style F-based T2/DModX limits, alpha=0.95")
     print("   'class_prescaled' = per-class autoscaled (matches mdatools scaling)")
-    print("   'native_global'   = ordinary open_nipals usage (global StandardScaler)")
+    print("   'native'          = ordinary multi-class SIMCA(scale=True)")
     print("=" * 78)
     p_all = pd.read_csv(OUT / "classification_counts_py.csv")
     for dataset in DATASETS:

@@ -12,11 +12,12 @@ numbers), fits open_nipals SIMCA models in two ways:
    exactly, so the resulting T2/Q values are comparable definition-for-
    definition with mdatools' $T2/$Q matrices (see REPORT.md part A).
 
-2. "native_global": the ordinary way open_nipals SIMCA is meant to be
-   used -- one global StandardScaler fit on all calibration rows
-   (scale=True, the default), then per-class centering internally. This
-   is what a user of the library actually gets, and is compared against
-   mdatools' SIMCA-style limits and the multi-class `simcam` model.
+2. "native": the ordinary way open_nipals SIMCA is used, the multi-class
+   SIMCA(scale=True) model, which autoscales every class on its own
+   calibration rows. Since commit 45335be this is the same scaling as
+   in 1 (before it, one global StandardScaler was used, see REPORT.md),
+   so the two columns must agree. It is compared against mdatools'
+   SIMCA-style limits and the multi-class `simcam` model.
 
 Run with:
     PYTHONPATH=<repo>/src python3 validation/simca_mdatools/run_py.py
@@ -281,7 +282,7 @@ def fit_native_model(name: str, split: dict, cal_df, test_df):
                 "true_class": cls,
                 "n_total": len(idx_cal_cls),
                 "n_accepted": n_accept_cal,
-                "scaling": "native_global",
+                "scaling": "native",
             }
         )
         for tc in sorted(set(y_test.tolist())):
@@ -296,7 +297,7 @@ def fit_native_model(name: str, split: dict, cal_df, test_df):
                     "true_class": tc,
                     "n_total": len(idx),
                     "n_accepted": n_accept,
-                    "scaling": "native_global",
+                    "scaling": "native",
                 }
             )
 
