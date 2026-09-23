@@ -260,9 +260,15 @@ class ComponentSelector:
         ValueError
             If no component count leaves usable degrees of freedom.
         """
-        # Canonical row order: the CV folds (and so the selection) then
-        # depend on which rows are in the class, not on their order
-        X = X[np.lexsort(np.nan_to_num(X, nan=np.inf).T[::-1])]
+        # Canonical column and row order: the CV folds and Wold's
+        # diagonal element groups (and so the selection) then depend on
+        # the data, not on how its rows and columns are ordered. Columns
+        # are keyed by their sorted values, which ignores the row order.
+        filled = np.nan_to_num(X, nan=np.inf)
+        column_keys = np.sort(filled, axis=0)
+        X = X[:, np.lexsort(column_keys[::-1])]
+        filled = np.nan_to_num(X, nan=np.inf)
+        X = X[np.lexsort(filled.T[::-1])]
         n_samples = X.shape[0]
         n_features = _n_varying(X)
         cv = KFoldCV(n_splits=max(2, min(cv_folds, n_samples)))
@@ -804,10 +810,7 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         # all the variation: DModX would measure numerical noise. NIPALS
         # can also run out of variation mid-fit and return NaN loadings.
         data_scale = float(np.sqrt(np.nanmean(X_centered**2)))
-        # Rounding leaves residuals of about eps (measured ~0.2 eps for
-        # an exhausted rank); 100 eps separates that from real noise,
-        # which in float32 can be as small as 1e-4 of the data scale
-        tolerance = 100 * self._compute_eps()
+        tolerance = self._residual_tolerance()
         fit_failed = not (
             np.all(np.isfinite(np.asarray(pca.loadings))) and np.isfinite(s0)
         )
@@ -848,6 +851,21 @@ class SIMCA(ClassifierMixin, BaseEstimator):
     def _compute_eps(self) -> float:
         """Machine epsilon of the precision the PCA models compute in."""
         return float(np.finfo(np.float64).eps)
+
+    def _convergence_tolerance(self) -> float:
+        """The NIPALS tolerance the PCA models actually use."""
+        return float(self.tol_criteria)
+
+    def _residual_tolerance(self) -> float:
+        """
+        Relative residual scale below which nothing is left to model.
+
+        The larger of rounding (100 eps; an exhausted rank measured
+        ~0.2 eps) and the NIPALS convergence tolerance: an iterative fit
+        cannot resolve residuals below its own tolerance, e.g. when it
+        fits missing values of rank-deficient data exactly.
+        """
+        return max(100 * self._compute_eps(), self._convergence_tolerance())
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "SIMCA":
         """

@@ -115,6 +115,26 @@ def _fit_components(
         t_init = jax.lax.dynamic_slice_in_dim(
             x0, jnp.argmax(jnp.sum(x0**2, axis=0)), 1, axis=1
         )
+        if obs is not None:
+            # Leading component of the zero-filled data as start, as in
+            # the NumPy version (_zero_filled_start)
+            def power_step(state):
+                t_old, _, n_iter = state
+                loading = x0.T @ t_old
+                norm = jnp.linalg.norm(loading)
+                safe = jnp.where(norm == 0, 1.0, norm)
+                t_next = jnp.where(norm == 0, t_old, x0 @ (loading / safe))
+                return (t_next, t_old, n_iter + 1)
+
+            def power_not_done(state):
+                t_now, t_old, n_iter = state
+                den = jnp.maximum(jnp.linalg.norm(t_now), 1e-12)
+                change = jnp.linalg.norm(t_now - t_old) / den
+                return (n_iter == 0) | (~(change <= tol) & (n_iter < max_iter))
+
+            t_init, _, _ = jax.lax.while_loop(
+                power_not_done, power_step, (t_init, t_init, 0)
+            )
         state = (
             t_init,
             jnp.zeros_like(t_init),

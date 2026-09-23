@@ -27,6 +27,36 @@ from scipy.stats import f as F_dist
 from open_nipals.utils import _nan_mult
 
 
+def _zero_filled_start(
+    data: np.ndarray, t: np.ndarray, tol: float, max_iter: int
+) -> np.ndarray:
+    """Leading score vector of the zero-filled data, by power iteration.
+
+    Args:
+        data (np.ndarray): The (deflated) data, possibly with NaNs.
+        t (np.ndarray): Starting score vector (n x 1).
+        tol (float): Relative convergence tolerance.
+        max_iter (int): Maximum number of iterations.
+
+    Returns:
+        np.ndarray: The score vector (n x 1).
+    """
+    x0 = np.nan_to_num(data)
+    for _ in range(max_iter):
+        loading = x0.T @ t
+        norm = np.linalg.norm(loading)
+        if norm == 0:
+            return t
+        t_new = x0 @ (loading / norm)
+        converged = np.linalg.norm(t_new - t) <= tol * max(
+            np.linalg.norm(t_new), 1e-12
+        )
+        t = t_new
+        if converged:
+            break
+    return t
+
+
 class NipalsPCA(BaseEstimator, TransformerMixin):
     """The custom-built class to use PCA using the NIPALS algorithm, i.e.,
     the same algorithm used in SIMCA.
@@ -184,6 +214,15 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
             # Replace any nans w/ zero
             t_new[np.isnan(t_new)] = 0
+
+            # With missing data NIPALS can converge to different local
+            # solutions from different starts; start from the leading
+            # component of the zero-filled data, which does not depend on
+            # the column order or units (standard for missing-data PCA)
+            if nan_flag:
+                t_new = _zero_filled_start(
+                    data, t_new, self.tol_criteria, self.max_iter
+                )
             if verbose:
                 print("Score initialized")
 

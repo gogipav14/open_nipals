@@ -50,6 +50,13 @@ class SIMCA(SIMCA_Base):
 
     _pca_class = NipalsPCA_JAX
 
+    def _convergence_tolerance(self) -> float:
+        """NIPALS tolerance after the float32 floor of the JAX models."""
+        from open_nipals.jax.utils import _resolve_dtype
+
+        _, tol = _resolve_dtype(None, self.tol_criteria)
+        return float(tol)
+
     def _compute_eps(self) -> float:
         """Epsilon of the dtype the JAX PCA models compute in.
 

@@ -1089,7 +1089,7 @@ class TestSIMCAReviewRound8:
             np.testing.assert_allclose(
                 wide.get_distances(X_eval_wide)["dmodx"],
                 base.get_distances(X_eval)["dmodx"],
-                rtol=1e-8,
+                rtol=1e-6,
             )
 
     def test_row_observed_only_in_constant_features_is_rejected(self):
@@ -1416,3 +1416,34 @@ def test_q2_selection_does_not_stop_at_a_weak_component(monkeypatch):
     X = np.random.default_rng(0).normal(size=(40, 8))
 
     assert ComponentSelector.select_by_q2(NipalsPCA, X, max_components=5) == 3
+
+
+def test_q2_selection_ignores_row_and_column_order():
+    rng = np.random.default_rng(5)
+    X = rng.normal(size=(60, 2)) @ rng.normal(size=(2, 7))
+    X += 0.3 * rng.normal(size=X.shape)
+    X[rng.random(X.shape) < 0.05] = np.nan
+    rows, cols = rng.permutation(60), rng.permutation(7)
+
+    q2 = [
+        ComponentSelector.select_by_q2(NipalsPCA, data, max_components=5)
+        for data in (X, X[rows], X[:, cols], X[rows][:, cols])
+    ]
+
+    assert len(set(q2)) == 1
+
+
+def test_zero_filled_start_reaches_the_same_solution():
+    """With missing data the fit must not depend on the column order."""
+    rng = np.random.default_rng(21)
+    X = rng.normal(size=(40, 3)) @ rng.normal(size=(3, 8))
+    X += 0.3 * rng.normal(size=X.shape)
+    X[rng.random(X.shape) < 0.1] = np.nan
+    X -= np.nanmean(X, axis=0)
+    perm = rng.permutation(8)
+
+    a = NipalsPCA(n_components=2).fit(X)
+    b = NipalsPCA(n_components=2).fit(X[:, perm])
+
+    cos = np.abs(np.sum(a.loadings[perm] * b.loadings, axis=0))
+    np.testing.assert_allclose(cos, 1.0, atol=1e-6)

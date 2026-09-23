@@ -123,9 +123,6 @@ def test_single_value_training_rows(data, settings):
 
 
 def test_feature_permutation(data, settings):
-    if settings.get("component_selection") == "q2":
-        pytest.skip("Wold's diagonal CV pattern depends on column order")
-    # (row order is canonicalised before CV, see test_training_row_order)
     X, y, X_eval = data
     perm = np.random.default_rng(2).permutation(X.shape[1])
     assert_same_classifier(
