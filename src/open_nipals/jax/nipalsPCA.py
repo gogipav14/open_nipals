@@ -397,6 +397,15 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
             # Projection to model plane method
             scores = _transform_projection(x0, obs, loadings)
 
+        elif method == "conditional_mean" and dtype != jnp.float64:
+            # The (features x features) model covariance spans the score
+            # variances, whose ratio can be far below float32 resolution;
+            # a float32 pseudo-inverse would drop small but real
+            # components. Use the NumPy reference in float64 instead.
+            return _ReferenceNipalsPCA.transform(
+                self, np.asarray(X, dtype=np.float64).copy(), method=method
+            )
+
         elif method == "conditional_mean":
             # Conditional mean replacement method
             if self.fit_data is None:

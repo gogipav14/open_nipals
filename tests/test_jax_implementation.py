@@ -551,3 +551,28 @@ class TestFloat32HotellingT2:
             jax.config.update("jax_enable_x64", True)
 
         assert float(np.asarray(t2)[0, 0]) > 50
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+def test_float32_conditional_mean_keeps_small_component():
+    rng = np.random.default_rng(42)
+    X = rng.normal(size=(200, 1)) + 1e-3 * rng.normal(size=(200, 8))
+    X = X - X.mean(axis=0)
+    X_nan = X.copy()
+    X_nan[rng.random(X.shape) < 0.1] = np.nan
+
+    reference = NipalsPCA(n_components=2).fit(X)
+    expected = reference.transform(X_nan.copy(), method="conditional_mean")
+    jax.config.update("jax_enable_x64", False)
+    try:
+        model = NipalsPCA_JAX(n_components=2).fit(X)
+        scores = model.transform(X_nan.copy(), method="conditional_mean")
+    finally:
+        jax.config.update("jax_enable_x64", True)
+
+    # The model is grown to all 8 components internally; in float32 the
+    # six noise components are not well defined and vary between GPU
+    # runs, moving component 2 by 0.2-7 % of its sd (25 % before the
+    # fix), so allow twice the worst observed run
+    error = np.abs(np.abs(scores) - np.abs(expected)).max(axis=0)
+    assert np.all(error < 0.15 * expected.std(axis=0))
