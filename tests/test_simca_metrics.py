@@ -296,9 +296,7 @@ class TestElementWiseQ2:
     def test_press_and_ss_total_are_finite(self, rank_two_data):
         """cross_val_press_pca reports both PRESS and its reference."""
         cv = KFoldCV(n_splits=5)
-        press, ss_total = cross_val_press_pca(
-            NipalsPCA, rank_two_data, 2, cv
-        )
+        press, ss_total = cross_val_press_pca(NipalsPCA, rank_two_data, 2, cv)
 
         assert np.isfinite(press) and press > 0
         assert np.isfinite(ss_total) and ss_total > 0
@@ -314,9 +312,7 @@ class TestElementWiseQ2:
 class TestPRESSFailedPredictions:
     """Finding 6: failed predictions must not earn Q² credit."""
 
-    def test_press_infinite_when_all_predictions_fail(
-        self, sample_pca_data
-    ):
+    def test_press_infinite_when_all_predictions_fail(self, sample_pca_data):
         """All-NaN predictions are a failure, not missing data."""
         X = sample_pca_data
         X_pred = np.full_like(X, np.nan)
@@ -332,9 +328,7 @@ class TestPRESSFailedPredictions:
 
         assert calc_press(X, X_pred) == np.inf
 
-    def test_press_per_variable_marks_failed_columns(
-        self, sample_pca_data
-    ):
+    def test_press_per_variable_marks_failed_columns(self, sample_pca_data):
         """Only the column that failed becomes infinite."""
         X = sample_pca_data
         X_pred = X.copy()

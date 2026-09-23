@@ -175,13 +175,11 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
         # Loop for all LVs
         for i in num_lvs:
-            # choose a column of input_array as the starting guess; a
-            # column of zeros would make every iteration NaN
-            # (NaN counts as nonzero for np.any, so test the observed
-            # sum of squares instead)
-            start_col = 0
-            if not np.nansum(data[:, 0] ** 2) > 0:
-                start_col = np.argmax(np.nansum(data**2, axis=0))
+            # start from the column with the largest observed sum of
+            # squares: independent of the column order, never all zero,
+            # and closest to the leading component. With missing data
+            # NIPALS can settle on a worse solution from a poor start.
+            start_col = np.argmax(np.nansum(data**2, axis=0))
             t_new = data[:, [start_col]].copy()
 
             # Replace any nans w/ zero
@@ -237,6 +235,14 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
                 num_iter += 1
 
                 # Store scores and loads
+                scores[:, i : i + 1] = t_new
+                loadings[:, i : i + 1] = loadings_loc
+
+            # The sign of a component is arbitrary; keep the convention of
+            # the former start column (positive correlation with the first
+            # column), which published reference results use
+            if t_new.T @ np.nan_to_num(data[:, [0]]) < 0:
+                t_new, loadings_loc = -t_new, -loadings_loc
                 scores[:, i : i + 1] = t_new
                 loadings[:, i : i + 1] = loadings_loc
 

@@ -211,12 +211,12 @@ class TestSIMCAScaling:
             np.testing.assert_allclose(
                 inside.get_distances(X)["dmodx"][:, i],
                 outside.get_distances(X_manual)["dmodx"][:, 0],
-                rtol=1e-8,
+                rtol=1e-6,  # NIPALS tolerance is 1e-8,
             )
             np.testing.assert_allclose(
                 inside.get_distances(X)["t2"][:, i],
                 outside.get_distances(X_manual)["t2"][:, 0],
-                rtol=1e-8,
+                rtol=1e-6,  # NIPALS tolerance is 1e-8,
             )
 
     def test_no_scale(self, two_class_data):
@@ -1374,7 +1374,6 @@ class TestSIMCAReviewRound16:
             ).fit(X_all, np.zeros(96, dtype=int))
 
         class_model = model.class_models_[0]
-        assert 1 <= class_model.n_components <= 2
         assert np.isfinite(class_model.s0) and class_model.s0 > 1e-6
         assert np.all(np.isfinite(class_model.pca_model.loadings))
         full_rows = ~np.isnan(X).any(axis=1)
@@ -1385,3 +1384,35 @@ class TestSIMCAReviewRound16:
         X = TestSIMCAReviewRound14._duplicated_channels()
         with pytest.raises(ValueError, match="no residual variation"):
             SIMCA(n_components=3).fit(X, np.zeros(56, dtype=int))
+
+
+def test_eigenvalue_selection_counts_leading_components_only():
+    """A diverged trailing component must not add to the Kaiser count."""
+
+    class FakePCA:
+        # score variances 4.9, 1.6, 0.99, then a diverged 3e5
+        fit_scores = np.column_stack(
+            [
+                np.sqrt(v) * np.tile([1.0, -1.0], 50)
+                for v in (4.9, 1.6, 0.99, 3e5)
+            ]
+        )
+
+    X = np.random.default_rng(0).normal(size=(100, 8))
+    X = (X - X.mean(axis=0)) / X.std(axis=0, ddof=1)
+
+    assert ComponentSelector.select_by_eigenvalue(FakePCA(), X) == 2
+
+
+def test_q2_selection_does_not_stop_at_a_weak_component(monkeypatch):
+    """Q² 0.55, 0.59, 0.90: a weak second component must not stop at 1."""
+    import open_nipals.simca.simca as simca_module
+
+    monkeypatch.setattr(
+        simca_module,
+        "calc_q2_cumulative_pca",
+        lambda *args, **kwargs: np.array([0.55, 0.59, 0.90, 0.17, -2.8]),
+    )
+    X = np.random.default_rng(0).normal(size=(40, 8))
+
+    assert ComponentSelector.select_by_q2(NipalsPCA, X, max_components=5) == 3

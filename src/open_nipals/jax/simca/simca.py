@@ -31,7 +31,8 @@ class SIMCA(SIMCA_Base):
     q2_cv_folds : int, default=7
         CV folds when component_selection='q2'.
     q2_min_improvement : float, default=0.05
-        Minimum Q² improvement when component_selection='q2'.
+        With component_selection='q2', the fewest components whose Q² is
+        within this of the best Q² are used.
     scale : bool, default=True
         Autoscale each class by its own training mean and standard
         deviation, see the NumPy version.

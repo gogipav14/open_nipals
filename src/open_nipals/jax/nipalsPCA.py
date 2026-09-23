@@ -110,8 +110,11 @@ def _fit_components(
                 t_new = _masked_mult(x0, obs, loadings_loc)
             return (t_new, t_old, loadings_loc, num_iter + 1)
 
-        # choose a column of input_array, NaNs are already zero
-        t_init = _start_column(x0, 0)
+        # column with the largest sum of squares, as in the NumPy
+        # version; NaNs are already zero
+        t_init = jax.lax.dynamic_slice_in_dim(
+            x0, jnp.argmax(jnp.sum(x0**2, axis=0)), 1, axis=1
+        )
         state = (
             t_init,
             jnp.zeros_like(t_init),
@@ -121,6 +124,11 @@ def _fit_components(
         t_new, _, loadings_loc, num_iter = jax.lax.while_loop(
             not_converged, iterate, state
         )
+
+        # Sign convention of the NumPy version: positive correlation
+        # with the first column
+        sign = jnp.where((t_new.T @ x0[:, [0]])[0, 0] < 0, -1.0, 1.0)
+        t_new, loadings_loc = sign * t_new, sign * loadings_loc
 
         # Deflate the input matrix, keeping missing entries at zero
         x0 = x0 - t_new @ loadings_loc.T

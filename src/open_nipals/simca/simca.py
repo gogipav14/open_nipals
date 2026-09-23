@@ -219,7 +219,14 @@ class ComponentSelector:
         **model_kwargs,
     ) -> int:
         """
-        Select components where Q² stops improving significantly.
+        Select the fewest components whose Q² is close to the best Q².
+
+        The count is the smallest one whose cumulative Q² is within
+        ``min_improvement`` of the maximum over all evaluated counts.
+        Stopping at the first small improvement instead is fragile: a
+        weak component followed by a strong one (Q² 0.55, 0.59, 0.90)
+        would stop at 1, and which side of the threshold the weak step
+        falls on depends on the CV folds.
 
         Q² comes from the element-wise (Wold) cross-validation in
         :func:`~open_nipals.simca.cross_validation.cross_val_press_pca`,
@@ -238,7 +245,8 @@ class ComponentSelector:
         cv_folds : int, default=7
             Number of CV folds. Clipped to the number of samples.
         min_improvement : float, default=0.05
-            Minimum Q² improvement to add another component.
+            Tolerance below the best Q² within which fewer components
+            are preferred.
         **model_kwargs
             Additional arguments for model constructor.
 
@@ -252,6 +260,9 @@ class ComponentSelector:
         ValueError
             If no component count leaves usable degrees of freedom.
         """
+        # Canonical row order: the CV folds (and so the selection) then
+        # depend on which rows are in the class, not on their order
+        X = X[np.lexsort(np.nan_to_num(X, nan=np.inf).T[::-1])]
         n_samples = X.shape[0]
         n_features = _n_varying(X)
         cv = KFoldCV(n_splits=max(2, min(cv_folds, n_samples)))
@@ -286,16 +297,9 @@ class ComponentSelector:
                     raise
                 max_components -= 1
 
-        # Find where Q² stops improving
-        best_n = 1
-        for i in range(1, len(q2_values)):
-            improvement = q2_values[i] - q2_values[i - 1]
-            if improvement >= min_improvement:
-                best_n = i + 1
-            else:
-                break
-
-        return best_n
+        # Fewest components within min_improvement of the best Q²
+        close_to_best = q2_values >= np.max(q2_values) - min_improvement
+        return int(np.argmax(close_to_best)) + 1
 
     @staticmethod
     def select_by_eigenvalue(
@@ -335,7 +339,12 @@ class ComponentSelector:
         total_variance = np.sum(column_variance[varying])
         eigenvalues = variances * n_features / total_variance
 
-        n_above = int(np.sum(eigenvalues > threshold))
+        # Leading components only: stop at the first eigenvalue below the
+        # threshold. With missing data NIPALS can fail to converge on a
+        # small trailing component and return a huge score variance,
+        # which must not count.
+        below = np.flatnonzero(~(eigenvalues > threshold))
+        n_above = int(below[0]) if below.size else len(eigenvalues)
         return max(1, n_above)  # At least 1 component
 
 
@@ -362,7 +371,8 @@ class SIMCA(ClassifierMixin, BaseEstimator):
     q2_cv_folds : int, default=7
         CV folds when component_selection='q2'.
     q2_min_improvement : float, default=0.05
-        Minimum Q² improvement when component_selection='q2'.
+        With component_selection='q2', the fewest components whose Q² is
+        within this of the best Q² are used.
     scale : bool, default=True
         Autoscale each class by its own training mean and standard
         deviation (ddof=1), as SIMCA-P does. With False the classes are
