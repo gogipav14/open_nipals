@@ -861,11 +861,16 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         Relative residual scale below which nothing is left to model.
 
         The larger of rounding (100 eps; an exhausted rank measured
-        ~0.2 eps) and the NIPALS convergence tolerance: an iterative fit
-        cannot resolve residuals below its own tolerance, e.g. when it
-        fits missing values of rank-deficient data exactly.
+        ~0.2 eps) and 10x the NIPALS convergence tolerance: an iterative
+        fit cannot resolve residuals near its own tolerance, e.g. when it
+        fits missing values of rank-deficient data exactly (measured
+        4.5e-10 to 1.6e-8 relative with tol 1e-8, depending on the start
+        vector). In float32 (tol floored at 1e-5) this is 1e-4, so real
+        noise below 1e-4 of the data scale counts as no residual there.
         """
-        return max(100 * self._compute_eps(), self._convergence_tolerance())
+        return max(
+            100 * self._compute_eps(), 10 * self._convergence_tolerance()
+        )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "SIMCA":
         """

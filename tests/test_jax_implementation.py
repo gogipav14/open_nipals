@@ -576,3 +576,13 @@ def test_float32_conditional_mean_keeps_small_component():
     # fix), so allow twice the worst observed run
     error = np.abs(np.abs(scores) - np.abs(expected)).max(axis=0)
     assert np.all(error < 0.15 * expected.std(axis=0))
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+def test_jax_start_is_not_trapped_by_an_orthogonal_column():
+    X = np.tile(
+        [[-1, -1, -1.2], [-1, -1, 1.2], [1, 1, -1.2], [1, 1, 1.2]], (5, 1)
+    ).astype(float)
+    model = NipalsPCA_JAX(n_components=1).fit(X)
+    expected = np.array([1.0, 1.0, 0.0]) / np.sqrt(2)
+    assert abs(model.loadings[:, 0] @ expected) > 0.999

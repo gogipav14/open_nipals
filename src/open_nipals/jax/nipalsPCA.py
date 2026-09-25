@@ -30,6 +30,7 @@ import warnings
 from scipy.stats import f as F_dist
 from functools import partial
 from open_nipals.nipalsPCA import NipalsPCA as _ReferenceNipalsPCA
+from open_nipals.nipalsPCA import _start_weights
 from open_nipals.jax.utils import (
     _full_precision_methods,
     _masked_mult,
@@ -67,6 +68,7 @@ def _fit_components(
     n_add: int,
     tol: float,
     max_iter: int,
+    start_weights: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Fit n_add NIPALS components, deflating after each one.
 
@@ -80,6 +82,8 @@ def _fit_components(
         n_add (int): Number of components to fit.
         tol (float): The convergence threshold.
         max_iter (int): The maximum number of iterations per component.
+        start_weights (jnp.ndarray): Column weights of the start vector,
+            see open_nipals.nipalsPCA._start_weights.
 
     Returns:
         Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]: scores (n x n_add),
@@ -110,11 +114,13 @@ def _fit_components(
                 t_new = _masked_mult(x0, obs, loadings_loc)
             return (t_new, t_old, loadings_loc, num_iter + 1)
 
-        # column with the largest sum of squares, as in the NumPy
-        # version; NaNs are already zero
-        t_init = jax.lax.dynamic_slice_in_dim(
+        # Fixed random combination of all columns, see _generic_start
+        # in the NumPy version; NaNs are already zero
+        t_init = x0 @ start_weights[:, None]
+        fallback = jax.lax.dynamic_slice_in_dim(
             x0, jnp.argmax(jnp.sum(x0**2, axis=0)), 1, axis=1
         )
+        t_init = jnp.where(jnp.any(t_init != 0), t_init, fallback)
         if obs is not None:
             # Leading component of the zero-filled data as start, as in
             # the NumPy version (_zero_filled_start)
@@ -332,8 +338,11 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
         if verbose:
             print("nan_mask Generated")
 
+        start_weights = jnp.asarray(
+            _start_weights(x0.shape[1]), dtype=x0.dtype
+        )
         scores, loadings, num_iters = _fit_components(
-            x0, obs, n_add, tol, self.max_iter
+            x0, obs, n_add, tol, self.max_iter, start_weights
         )
 
         # Results live in numpy, like the rest of the sklearn ecosystem

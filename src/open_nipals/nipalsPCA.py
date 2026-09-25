@@ -27,6 +27,24 @@ from scipy.stats import f as F_dist
 from open_nipals.utils import _nan_mult
 
 
+def _start_weights(n_features: int) -> np.ndarray:
+    """Fixed pseudo-random column weights for the NIPALS start vector."""
+    return np.random.default_rng(0).standard_normal(n_features)
+
+
+def _generic_start(data: np.ndarray) -> np.ndarray:
+    """Start score vector: zero-filled data times fixed random weights.
+
+    Falls back to the column with the largest observed sum of squares in
+    the (probability zero) case that the combination vanishes.
+    """
+    x0 = np.nan_to_num(data)
+    t = x0 @ _start_weights(data.shape[1])[:, None]
+    if not np.any(t):
+        t = x0[:, [np.argmax(np.sum(x0**2, axis=0))]]
+    return t
+
+
 def _zero_filled_start(
     data: np.ndarray, t: np.ndarray, tol: float, max_iter: int
 ) -> np.ndarray:
@@ -205,15 +223,12 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
 
         # Loop for all LVs
         for i in num_lvs:
-            # start from the column with the largest observed sum of
-            # squares: independent of the column order, never all zero,
-            # and closest to the leading component. With missing data
-            # NIPALS can settle on a worse solution from a poor start.
-            start_col = np.argmax(np.nansum(data**2, axis=0))
-            t_new = data[:, [start_col]].copy()
-
-            # Replace any nans w/ zero
-            t_new[np.isnan(t_new)] = 0
+            # Start from a fixed random combination of all columns: a
+            # single column can be orthogonal to the leading component
+            # (the iteration then never leaves the wrong subspace), a
+            # generic combination is not. The converged component does
+            # not depend on the start, so neither on the column order.
+            t_new = _generic_start(data)
 
             # With missing data NIPALS can converge to different local
             # solutions from different starts; start from the leading

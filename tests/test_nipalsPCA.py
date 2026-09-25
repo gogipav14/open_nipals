@@ -427,3 +427,32 @@ def test_zero_first_column_with_nan():
     model = NipalsPCA(n_components=2).fit(data)
 
     assert np.all(np.isfinite(model.loadings)), "Loadings contain NaN"
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_start_is_not_trapped_by_an_orthogonal_column(missing):
+    """The largest column can be orthogonal to the leading component."""
+    X = np.tile(
+        [[-1, -1, -1.2], [-1, -1, 1.2], [1, 1, -1.2], [1, 1, 1.2]], (5, 1)
+    ).astype(float)
+    if missing:
+        X[0, 0] = np.nan
+        X -= np.nanmean(X, axis=0)
+
+    model = NipalsPCA(n_components=1).fit(X)
+
+    expected = np.array([1.0, 1.0, 0.0]) / np.sqrt(2)
+    assert abs(model.loadings[:, 0] @ expected) > 0.999
+
+
+def test_start_handles_mirrored_columns():
+    """Columns x and -x: equal column statistics, contrast direction."""
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=40)
+    X = np.column_stack([x, -x, 0.1 * rng.normal(size=40)])
+    X -= X.mean(axis=0)
+
+    model = NipalsPCA(n_components=1).fit(X)
+
+    expected = np.array([1.0, -1.0, 0.0]) / np.sqrt(2)
+    assert abs(model.loadings[:, 0] @ expected) > 0.999
