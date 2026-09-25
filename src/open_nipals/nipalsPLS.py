@@ -306,13 +306,17 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
                     qi = _nan_mult(y_res.T, ti, nan_mask_y.T)
                     ui = _nan_mult(y_res, qi, nan_mask_y)
 
-                # guard against zero norm
-                den = max(np.linalg.norm(ti), 1e-12)
+                # Check convergence, relative to the score itself (an
+                # absolute floor would stop tiny-scale data at once); a
+                # zero score cannot change any more. Only once there
+                # are two computed X scores to compare.
+                ti_norm = np.linalg.norm(ti)
+                if ti_norm > 0:
+                    diff_norm = np.linalg.norm(ti - ti_old) / ti_norm
+                else:
+                    diff_norm = 0.0
 
-                # Check convergence
-                diff_norm = np.linalg.norm(ti - ti_old) / den
-
-                converged = diff_norm < self.tol_criteria
+                converged = iter_count >= 1 and diff_norm < self.tol_criteria
 
                 iter_count += 1
                 # end of while loop

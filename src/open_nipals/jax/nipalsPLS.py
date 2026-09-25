@@ -86,13 +86,18 @@ def _fit_components(
 
     def not_converged(state):
         ti, ti_old, _, _, _, iter_count = state
-        # guard against zero norm
-        den = jnp.maximum(jnp.linalg.norm(ti), 1e-12)
-        diff_norm = jnp.linalg.norm(ti - ti_old) / den
+        # relative to the score itself (see the NumPy version); a zero
+        # score cannot change any more
+        ti_norm = jnp.linalg.norm(ti)
+        safe = jnp.where(ti_norm > 0, ti_norm, 1.0)
+        diff_norm = jnp.where(
+            ti_norm > 0, jnp.linalg.norm(ti - ti_old) / safe, 0.0
+        )
         # written so that a NaN diff_norm counts as not converged
         not_done = ~(diff_norm < tol) & (iter_count < max_iter)
-        # a non-finite iterate never recovers, stop and report it
-        return (iter_count == 0) | (not_done & jnp.isfinite(diff_norm))
+        # a non-finite iterate never recovers, stop and report it;
+        # compare only once there are two computed X scores
+        return (iter_count < 2) | (not_done & jnp.isfinite(diff_norm))
 
     def one_component(residuals, _):
         x_res, y_res = residuals

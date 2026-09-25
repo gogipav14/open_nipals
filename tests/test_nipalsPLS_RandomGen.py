@@ -731,10 +731,16 @@ def test_start_is_not_trapped_by_an_orthogonal_y_column():
     assert np.allclose(model.predict(data_x), data_x @ [[0.0, 1.0]])
 
 
-def test_no_false_convergence_on_the_first_iteration():
-    """The first X score must not be compared with the Y start guess"""
-    data_x = np.array([[1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [-1.0, -1.0]]) / 2
-    data_y = data_x @ np.diag([2.0, 1.0])
+@pytest.mark.parametrize("x_scale", [1.0, 1e-20])
+def test_no_false_convergence_on_the_first_iteration(x_scale):
+    """The first X score must not be compared with the Y start guess,
+    and tiny-scale X must not look converged"""
+    data_x = (
+        np.array([[1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [-1.0, -1.0]])
+        / 2
+        * x_scale
+    )
+    data_y = data_x / x_scale @ np.diag([2.0, 1.0])
     data_y /= np.linalg.norm(
         data_y @ np.random.default_rng(0).standard_normal(2)
     )
