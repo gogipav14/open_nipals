@@ -3,10 +3,16 @@ conftest.py containing auxiliary test methods and fixtures
 for open_nipals
 """
 
+import os
 import warnings
 from typing import Tuple
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+
+# The tox "jax" environments set this, so that a broken JAX install fails
+# the run instead of silently skipping every JAX test
+if os.environ.get("OPEN_NIPALS_REQUIRE_JAX"):
+    import jax  # noqa: F401
 
 
 def nan_conc_coeff(y: np.ndarray, yhat: np.ndarray) -> float:

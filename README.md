@@ -116,7 +116,7 @@ The regression vector is a measure of how relevant each X feature is for the pre
 
 ## GPU acceleration with JAX (optional)
 
-`open_nipals.jax` contains drop-in versions of `NipalsPCA` and `NipalsPLS` whose fit and transform run as compiled [JAX](https://docs.jax.dev) programs, on a GPU if one is available.
+`open_nipals.jax` contains drop-in versions of `NipalsPCA` and `NipalsPLS` whose fit and transform run as compiled [JAX](https://docs.jax.dev) programs, on a GPU if one is available. It needs Python 3.10 or newer.
 They implement the same algorithm, including the missing data handling, and reproduce the results of the NumPy classes to rounding error.
 ```bash
 pip install open_nipals[jax]        # CPU only
