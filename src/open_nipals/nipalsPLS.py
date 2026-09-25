@@ -29,6 +29,7 @@ import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
 from sklearn.exceptions import NotFittedError
 from sklearn.covariance import LedoitWolf
+from open_nipals.nipalsPCA import _generic_start
 from open_nipals.utils import _nan_mult
 
 
@@ -222,11 +223,13 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             # Range of LVs to add
             num_lvs = range(fitted_components, fitted_components + n_add)
 
-            # There are loadings, so must deflate
-            sim_data_x = self.inverse_transform(self.transform(X))
-            sim_data_y = self.predict(X, self.fit_scores_x)
-            X = X - sim_data_x
-            y = y - sim_data_y
+            # There are loadings, so must deflate exactly as the fit loop
+            # below does (t p' for X, t q' for Y), so that a grown model
+            # equals a direct fit. predict() would use t b q', and b is
+            # not 1 when Y has missing values.
+            t_fit = self.fit_scores_x[:, :fitted_components]
+            X = X - t_fit @ self.loadings_x[:, :fitted_components].T
+            y = y - t_fit @ self.loadings_y[:, :fitted_components].T
 
             p = np.concatenate(
                 [self.loadings_x, np.zeros((n_cols_x, n_add))], axis=1
@@ -267,12 +270,12 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             std_y = np.nanstd(self.fit_data_y, axis=0)
             start_col = np.argmax(std_y)
 
-            # Scores guesses for LV i is a column vector from the residuals
-            ui = y_res[
-                :, [start_col]
-            ].copy()  # list in second position enforces column shape
-            # Replace any nans in ui with zero; it's just a guess after all
-            ui[np.isnan(ui)] = 0
+            # The start column fixes the sign convention; the start
+            # itself is a fixed random combination of all Y columns, as
+            # a single column can be orthogonal to X (see _generic_start
+            # in nipalsPCA)
+            u_sign = np.nan_to_num(y_res[:, [start_col]])
+            ui = _generic_start(y_res)
             ti = ui.copy()
 
             iter_count = 0
@@ -316,6 +319,10 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             # or just terminated after max_iter
             if iter_count >= self.max_iter:
                 warnings.warn(f"max_iter reached on LV {ind_lv}.")
+
+            # Sign convention: positive correlation with the start column
+            if ui.T @ u_sign < 0:
+                wi, ti, qi, ui = -wi, -ti, -qi, -ui
 
             # x loading
             if not nan_flag:

@@ -182,7 +182,7 @@ Validation against R `mdatools` 0.16.0 on Iris and Wine (`validation/simca_mdato
 ## Numerical notes
 
 - `NipalsPCA` (NumPy and JAX) starts each component from a fixed pseudo-random combination of all columns (with missing values, refined by power iteration on the zero-filled data). Its components therefore do not depend on the column order, and a single column orthogonal to the leading component cannot trap the iteration. Component signs follow the convention of positive correlation with the first column.
-- `NipalsPLS` starts from the Y column with the largest variance; see `KNOWN_LIMITATIONS.md` (repository root, also in the documentation) for the case this can fail.
+- `NipalsPLS` likewise starts from a fixed pseudo-random combination of the Y columns (a single Y column can be orthogonal to X); signs follow positive correlation with the Y column of largest variance. A model grown with `set_components` equals a direct fit with the same number of components, also with missing values in Y.
 - Accepted limitations and their reasons are listed in `KNOWN_LIMITATIONS.md` (repository root, also in the documentation).
 
 # References

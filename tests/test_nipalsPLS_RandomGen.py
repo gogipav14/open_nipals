@@ -695,3 +695,37 @@ def test_reg_vector_matches_predict():
         assert np.allclose(
             data_x @ model.get_reg_vector(), model.predict(data_x), atol=1e-10
         ), "Regression vector does not reproduce the predictions"
+
+
+@pytest.mark.parametrize("y_missing", [0.0, 0.05])
+def test_grown_model_equals_direct_fit_with_missing_y(y_missing):
+    """Growing deflates exactly like fitting, also with NaNs in Y"""
+    rng = np.random.default_rng(42)
+    data_x = rng.normal(size=(100, 20))
+    data_y = data_x @ rng.normal(size=(20, 3)) + 0.1 * rng.normal(
+        size=(100, 3)
+    )
+    mask = rng.random(data_y.shape) < y_missing
+    mask[mask.all(axis=1)] = False
+    data_y[mask] = np.nan
+    data_x -= data_x.mean(axis=0)
+    data_y -= np.nanmean(data_y, axis=0)
+
+    direct = NipalsPLS(n_components=5).fit(data_x, data_y)
+    grown = NipalsPLS(n_components=2).fit(data_x, data_y).set_components(5)
+
+    for name in ["loadings_x", "weights_x", "loadings_y", "fit_scores_x"]:
+        assert np.allclose(
+            getattr(grown, name), getattr(direct, name), atol=1e-8
+        ), name
+
+
+def test_start_is_not_trapped_by_an_orthogonal_y_column():
+    """The largest-variance Y column can be orthogonal to X"""
+    data_x = np.array([[1.0], [-1.0], [1.0], [-1.0]])
+    data_y = np.array([[2.0, 1.0], [2.0, -1.0], [-2.0, 1.0], [-2.0, -1.0]])
+
+    model = NipalsPLS(n_components=1).fit(data_x, data_y)
+
+    assert np.all(np.isfinite(model.loadings_x))
+    assert np.allclose(model.predict(data_x), data_x @ [[0.0, 1.0]])

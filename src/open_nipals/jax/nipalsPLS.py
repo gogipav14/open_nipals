@@ -35,6 +35,7 @@ from sklearn.exceptions import NotFittedError
 import warnings
 from functools import partial
 from open_nipals.jax.nipalsPCA import _start_column
+from open_nipals.nipalsPCA import _start_weights
 from open_nipals.nipalsPLS import NipalsPLS as _ReferenceNipalsPLS
 from open_nipals.jax.utils import (
     _full_precision_methods,
@@ -55,6 +56,7 @@ def _fit_components(
     n_add: int,
     tol: float,
     max_iter: int,
+    start_weights: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, ...]:
     """Fit n_add NIPALS PLS components, deflating after each one.
 
@@ -68,10 +70,12 @@ def _fit_components(
         y_res (jnp.ndarray): The (already deflated) Y data, NaNs set to zero.
         obs_y (Optional[jnp.ndarray]): 1 where y_res was observed. None if
             neither block has NaNs.
-        start_col (int): Column of Y to use as first guess of the Y scores.
+        start_col (int): Column of Y that sets the sign convention.
         n_add (int): Number of components to fit.
         tol (float): The convergence threshold.
         max_iter (int): The maximum number of iterations per component.
+        start_weights (jnp.ndarray): Y column weights of the start
+            vector, see open_nipals.nipalsPCA._start_weights.
 
     Returns:
         Tuple[jnp.ndarray, ...]: x scores, x loadings, x weights, y scores,
@@ -109,8 +113,12 @@ def _fit_components(
                 ui = _masked_mult(y_res, obs_y, qi)
             return (ti, ti_old, ui, wi, qi, iter_count + 1)
 
-        # Scores guess is a column of the Y residuals, NaNs are already zero
-        ui = _start_column(y_res, start_col)
+        # Fixed random combination of the Y columns as start, as in the
+        # NumPy version; the start column only sets the sign convention.
+        # NaNs are already zero.
+        u_sign = jax.lax.dynamic_slice_in_dim(y_res, start_col, 1, axis=1)
+        ui = y_res @ start_weights[:, None]
+        ui = jnp.where(jnp.any(ui != 0), ui, _start_column(y_res, start_col))
         state = (
             ui,
             jnp.zeros_like(ui),
@@ -122,6 +130,10 @@ def _fit_components(
         ti, _, ui, wi, qi, iter_count = jax.lax.while_loop(
             not_converged, iterate, state
         )
+
+        # Sign convention: positive correlation with the start column
+        sign = jnp.where((ui.T @ u_sign)[0, 0] < 0, -1.0, 1.0)
+        wi, ti, qi, ui = sign * wi, sign * ti, sign * qi, sign * ui
 
         # x loading
         if not nan_flag:
@@ -301,11 +313,11 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         fitted_components = self.fitted_components
 
         if fitted_components > 0:
-            # Deflate existing data
-            sim_data_x = self.inverse_transform(self.transform(X))
-            sim_data_y = self.predict(X, self.fit_scores_x)
-            X = X - sim_data_x
-            y = y - sim_data_y
+            # Deflate exactly as the fit loop does (t p', t q'), see the
+            # NumPy version
+            t_fit = self.fit_scores_x[:, :fitted_components]
+            X = X - t_fit @ self.loadings_x[:, :fitted_components].T
+            y = y - t_fit @ self.loadings_y[:, :fitted_components].T
 
         # Start with column of Y having max variance
         std_y = np.nanstd(self.fit_data_y, axis=0)
@@ -322,8 +334,19 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             else:
                 obs_y = jnp.ones(y_res.shape, obs_x.dtype)
 
+        start_weights = jnp.asarray(
+            _start_weights(y_res.shape[1]), dtype=y_res.dtype
+        )
         t, p, w, u, q, b_diag, iter_counts = _fit_components(
-            x_res, obs_x, y_res, obs_y, start_col, n_add, tol, self.max_iter
+            x_res,
+            obs_x,
+            y_res,
+            obs_y,
+            start_col,
+            n_add,
+            tol,
+            self.max_iter,
+            start_weights,
         )
 
         for i, iter_count in enumerate(np.asarray(iter_counts)):

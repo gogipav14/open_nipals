@@ -415,9 +415,8 @@ class TestNipalsPLSJax:
         """Components added after shrinking must not repeat fitted ones."""
         X, Y = sample_xy_data_with_nan
 
-        # Reference grows without shrinking first: with NaNs in Y a grown
-        # model differs slightly from a direct fit, also in the NumPy version
-        pls_ref = NipalsPLS_JAX(n_components=4).fit(X, Y).set_components(5)
+        # A grown model equals a direct fit, also with NaNs in Y
+        pls_ref = NipalsPLS_JAX(n_components=5).fit(X, Y)
         pls_jax = NipalsPLS_JAX(n_components=4).fit(X, Y)
         pls_jax.set_components(2).set_components(5)
 
@@ -586,3 +585,13 @@ def test_jax_start_is_not_trapped_by_an_orthogonal_column():
     model = NipalsPCA_JAX(n_components=1).fit(X)
     expected = np.array([1.0, 1.0, 0.0]) / np.sqrt(2)
     assert abs(model.loadings[:, 0] @ expected) > 0.999
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+def test_jax_pls_start_is_not_trapped_by_an_orthogonal_y_column():
+    X = np.array([[1.0], [-1.0], [1.0], [-1.0]])
+    Y = np.array([[2.0, 1.0], [2.0, -1.0], [-2.0, 1.0], [-2.0, -1.0]])
+    pls_np = NipalsPLS(n_components=1).fit(X, Y)
+    pls_jax = NipalsPLS_JAX(n_components=1).fit(X, Y)
+    assert np.all(np.isfinite(pls_jax.loadings_x))
+    np.testing.assert_allclose(pls_jax.predict(X), pls_np.predict(X), **PARITY)
