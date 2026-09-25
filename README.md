@@ -171,7 +171,7 @@ distances = model.get_distances(X_new)        # T2, normalised DModX and their l
 How it works:
 
 - One PCA model per class. With `scale=True` (default) every class is centred and scaled by its own training mean and standard deviation (as in SIMCA-P and R `mdatools`); constant features keep scale 1.
-- A sample belongs to a class when its Hotelling T² and its DModX are both within the class limits at confidence `alpha`. DModX is the residual standard deviation over the sample's observed, varying features, relative to the pooled training value; its limit is `NipalsPCA.calc_limit(metric="DModX")`.
+- A sample belongs to a class when its Hotelling T² and its DModX are both within the class limits at confidence level `alpha` (default 0.95, i.e. 5 % significance). DModX is the residual sum of squares over all of the sample's observed features, divided by its degrees of freedom (observed features that vary within the class, minus the number of components), relative to the pooled training value; its limit is `NipalsPCA.calc_limit(metric="DModX")`. A sample that deviates in a feature that was constant in the class training data is therefore out of model.
 - `predict` returns the single class a sample belongs to, the closest one (combined normalised distance) if it belongs to several, and for none either the closest class (`unknown_handling="closest"`, default) or `None` (`"reject"`).
 - `n_components` is an int or `"auto"`: `component_selection="q2"` (default) uses element-wise (Wold) cross validation and takes the fewest components whose Q² is within `q2_min_improvement` of the best; `"r2"` and `"eigenvalue"` (Kaiser) are also available. Automatic counts are capped by the class size, the number of varying features, the rank of the data and the missing-data pattern.
 - Missing values are supported. Training rows with too few observed varying features for the model are dropped with a warning; new samples with too few are rejected (infinite DModX).
@@ -181,8 +181,9 @@ Validation against R `mdatools` 0.16.0 on Iris and Wine (`validation/simca_mdato
 
 ## Numerical notes
 
-- NIPALS starts each component from a fixed pseudo-random combination of all columns (with missing values, refined by power iteration on the zero-filled data). The fitted components therefore do not depend on the column order, and a single column orthogonal to the leading component cannot trap the iteration. Component signs follow the convention of positive correlation with the first column.
-- Accepted limitations and their reasons are listed in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+- `NipalsPCA` (NumPy and JAX) starts each component from a fixed pseudo-random combination of all columns (with missing values, refined by power iteration on the zero-filled data). Its components therefore do not depend on the column order, and a single column orthogonal to the leading component cannot trap the iteration. Component signs follow the convention of positive correlation with the first column.
+- `NipalsPLS` starts from the Y column with the largest variance; see `KNOWN_LIMITATIONS.md` (repository root, also in the documentation) for the case this can fail.
+- Accepted limitations and their reasons are listed in `KNOWN_LIMITATIONS.md` (repository root, also in the documentation).
 
 # References
 

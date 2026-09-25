@@ -28,6 +28,10 @@ Rows that cannot be modelled are dropped with a warning rather than raising: row
 Class-membership counts differ from `mdatools` by a few samples per class because the limits differ (SIMCA-P F-based limits here; `ddmoments`, `jm` or `chisq` in `mdatools`, which also disagree with each other by a similar margin). Distances themselves agree to 5e-7 relative.
 Details: `validation/simca_mdatools/REPORT.md`.
 
+## PLS start column
+
+`NipalsPLS` (NumPy and JAX) starts each component from the Y column with the largest variance. If that column is orthogonal to X (e.g. `X = [1, -1, 1, -1]`, `Y = [[2, 1], [2, -1], [-2, 1], [-2, -1]]`) the iteration cannot leave it and the loadings are NaN. Scheduled to be fixed together with the next item (project plan, WP3).
+
 ## PLS grown with set_components when Y has missing values
 
 A PLS model grown with `set_components` differs by about 1e-2 in the loadings from a direct fit with the same number of components when Y has missing values (identical for complete Y). Growing deflates Y with `predict()` (b t q'), the fit loop with t q'. Scheduled to be fixed (see the project plan, WP3); until then, fit directly with the final number of components when Y has missing values.

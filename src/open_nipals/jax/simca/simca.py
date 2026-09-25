@@ -23,7 +23,8 @@ class SIMCA(SIMCA_Base):
     n_components : int or 'auto', default=2
         Number of components for each class model.
     alpha : float, default=0.95
-        Significance level for T² and DModX limits.
+        Confidence level of the T² and DModX limits (0.95 corresponds
+        to a 5 % significance level).
     component_selection : str, default='q2'
         Method for automatic component selection: 'r2', 'q2', 'eigenvalue'.
     r2_threshold : float, default=0.80

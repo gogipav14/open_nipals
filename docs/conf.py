@@ -28,6 +28,10 @@ extensions = ["sphinx.ext.autodoc", "sphinx.ext.napoleon", "myst_parser"]
 # The JAX module is an optional extra; document it without installing JAX
 autodoc_mock_imports = ["jax", "jaxlib"]
 
+# NipalsPCA and NipalsPLS exist both in the NumPy and in the JAX module,
+# so short names in type hints match two classes; either link is fine
+suppress_warnings = ["ref.python"]
+
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 

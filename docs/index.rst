@@ -8,6 +8,7 @@ This is release |release| of the documentation for the open\_nipals package.
 
    readme
    open_nipals
+   known_limitations
    contributing
    authors
 

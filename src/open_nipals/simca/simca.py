@@ -369,7 +369,8 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         Every class needs n_class - n_components - 1 >= 1 and
         n_features - n_components >= 1, otherwise fit() raises.
     alpha : float, default=0.95
-        Significance level for T² and DModX limits.
+        Confidence level of the T² and DModX limits (0.95 corresponds
+        to a 5 % significance level).
     component_selection : str, default='q2'
         Method for automatic component selection: 'r2', 'q2', 'eigenvalue'.
     r2_threshold : float, default=0.80
@@ -1093,12 +1094,13 @@ class SIMCA(ClassifierMixin, BaseEstimator):
         Returns
         -------
         dict
-            Dictionary with keys:
-            - 't2_in': List of class labels where T² is within limit
-            - 'dmodx_in': List of class labels where DModX is within limit
-            - 'both_in': List of class labels where both are within limits
-            - 'member_of': Final membership (intersection of t2_in and
-              dmodx_in)
+            Dictionary with one list of class labels per sample under
+            each key:
+
+            - 't2_in': classes whose T² limit the sample is within
+            - 'dmodx_in': classes whose DModX limit the sample is within
+            - 'both_in': classes whose both limits the sample is within
+            - 'member_of': final membership (same as 'both_in')
         """
         self._check_fitted()
         return self._class_membership(self._prepare_input(X))
