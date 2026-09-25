@@ -25,6 +25,9 @@ release = "2.0.1"
 # rendering markdown with myst
 extensions = ["sphinx.ext.autodoc", "sphinx.ext.napoleon", "myst_parser"]
 
+# The JAX module is an optional extra; document it without installing JAX
+autodoc_mock_imports = ["jax", "jaxlib"]
+
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 

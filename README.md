@@ -155,6 +155,35 @@ Time in seconds for `fit()` with 5 components, excluding the one-off compilation
 Without a GPU the JAX classes are still about 7x faster than NumPy on data with missing values, but can be slower on large complete data.
 
 
+## SIMCA classification
+
+`open_nipals.simca.SIMCA` is a SIMCA (Soft Independent Modelling of Class Analogy) classifier built on `NipalsPCA`, with a `scikit-learn` classifier interface (`fit`, `predict`, `predict_proba`, `score`; `is_classifier` is true, so scorers and ensembles accept it).
+`open_nipals.jax.simca.SIMCA` is the same classifier on top of the JAX `NipalsPCA`.
+```python
+from open_nipals.simca import SIMCA
+
+model = SIMCA(n_components="auto", alpha=0.95).fit(X_train, y_train)
+labels = model.predict(X_new)                 # None for rejected samples with unknown_handling="reject"
+membership = model.get_class_membership(X_new)
+distances = model.get_distances(X_new)        # T2, normalised DModX and their limits per class
+```
+
+How it works:
+
+- One PCA model per class. With `scale=True` (default) every class is centred and scaled by its own training mean and standard deviation (as in SIMCA-P and R `mdatools`); constant features keep scale 1.
+- A sample belongs to a class when its Hotelling T² and its DModX are both within the class limits at confidence `alpha`. DModX is the residual standard deviation over the sample's observed, varying features, relative to the pooled training value; its limit is `NipalsPCA.calc_limit(metric="DModX")`.
+- `predict` returns the single class a sample belongs to, the closest one (combined normalised distance) if it belongs to several, and for none either the closest class (`unknown_handling="closest"`, default) or `None` (`"reject"`).
+- `n_components` is an int or `"auto"`: `component_selection="q2"` (default) uses element-wise (Wold) cross validation and takes the fewest components whose Q² is within `q2_min_improvement` of the best; `"r2"` and `"eigenvalue"` (Kaiser) are also available. Automatic counts are capped by the class size, the number of varying features, the rank of the data and the missing-data pattern.
+- Missing values are supported. Training rows with too few observed varying features for the model are dropped with a warning; new samples with too few are rejected (infinite DModX).
+
+Validation against R `mdatools` 0.16.0 on Iris and Wine (`validation/simca_mdatools/`): per-sample T² and residuals agree to within 5e-7 relative, and class membership agrees for 96.7 % (Iris) and 97.8 % (Wine) of sample/class pairs; the remaining differences come from the different limit definitions (SIMCA-P F-based here, data-driven in `mdatools`).
+`tests/test_simca_invariance.py` checks that constant or empty columns, empty rows, row and column order and feature units do not change the classifier; `validation/sweep_simca_invariance.py` runs it over many random data sets.
+
+## Numerical notes
+
+- NIPALS starts each component from a fixed pseudo-random combination of all columns (with missing values, refined by power iteration on the zero-filled data). The fitted components therefore do not depend on the column order, and a single column orthogonal to the leading component cannot trap the iteration. Component signs follow the convention of positive correlation with the first column.
+- Accepted limitations and their reasons are listed in [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+
 # References
 
 PLS algorithm implemented from Chapter 6 of:

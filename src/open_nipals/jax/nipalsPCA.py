@@ -246,7 +246,7 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
     JAX for GPU acceleration on large datasets.
 
     Attributes:
-    ----------
+    -----------
     n_components : int
         The number of principal components.
     max_iter : int

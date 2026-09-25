@@ -189,7 +189,7 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
     JAX for GPU acceleration on large datasets.
 
     Attributes:
-    ----------
+    -----------
     n_components : int
         The number of latent variables.
     max_iter : int
