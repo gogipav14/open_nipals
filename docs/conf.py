@@ -23,7 +23,15 @@ release = "2.0.1"
 # conversion of numpy/autodocstring style to
 # rst readable style with napoleon
 # rendering markdown with myst
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.napoleon", "myst_parser"]
+extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
+    "myst_parser",
+]
+
+# Methods inherited from scikit-learn refer to its glossary and guide
+intersphinx_mapping = {"sklearn": ("https://scikit-learn.org/stable/", None)}
 
 # The JAX module is an optional extra; document it without installing JAX
 autodoc_mock_imports = ["jax", "jaxlib"]
