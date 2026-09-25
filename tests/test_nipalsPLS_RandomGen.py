@@ -749,3 +749,11 @@ def test_no_false_convergence_on_the_first_iteration(x_scale):
 
     # Dominant covariance direction of X'Y is the first X column
     assert np.allclose(np.abs(model.weights_x[:, 0]), [1.0, 0.0], atol=1e-6)
+
+
+def test_non_finite_scores_are_reported():
+    """X orthogonal to Y: no PLS component exists, say so"""
+    data_x = np.array([[1.0], [-1.0], [1.0], [-1.0]])
+    data_y = np.array([[1.0], [1.0], [-1.0], [-1.0]])
+    with pytest.warns(UserWarning, match="Non-finite"):
+        NipalsPLS(n_components=1).fit(data_x, data_y)

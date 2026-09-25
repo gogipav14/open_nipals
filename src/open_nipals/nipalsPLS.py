@@ -311,19 +311,26 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
                 # zero score cannot change any more. Only once there
                 # are two computed X scores to compare.
                 ti_norm = np.linalg.norm(ti)
+                iter_count += 1
+                if not np.isfinite(ti_norm):
+                    # a non-finite iterate never recovers
+                    break
                 if ti_norm > 0:
                     diff_norm = np.linalg.norm(ti - ti_old) / ti_norm
                 else:
                     diff_norm = 0.0
 
-                converged = iter_count >= 1 and diff_norm < self.tol_criteria
-
-                iter_count += 1
+                converged = iter_count >= 2 and diff_norm < self.tol_criteria
                 # end of while loop
 
             # Check whether it actually converged
             # or just terminated after max_iter
-            if iter_count >= self.max_iter:
+            if not np.all(np.isfinite(ti)):
+                warnings.warn(
+                    f"Non-finite values on LV {ind_lv}, the model is not "
+                    "usable."
+                )
+            elif iter_count >= self.max_iter:
                 warnings.warn(f"max_iter reached on LV {ind_lv}.")
 
             # Sign convention: positive correlation with the start column

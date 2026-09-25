@@ -608,3 +608,22 @@ def test_jax_pls_no_false_convergence_on_the_first_iteration(x_scale):
     np.testing.assert_allclose(
         np.abs(model.weights_x[:, 0]), [1.0, 0.0], atol=1e-6
     )
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+def test_jax_pls_respects_max_iter_one():
+    X = np.array([[1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [-1.0, -1.0]]) / 2
+    Y = X @ np.diag([2.0, 1.0])
+    with pytest.warns(UserWarning):
+        pls_np = NipalsPLS(n_components=1, max_iter=1).fit(X, Y)
+    with pytest.warns(UserWarning):
+        pls_jax = NipalsPLS_JAX(n_components=1, max_iter=1).fit(X, Y)
+    np.testing.assert_allclose(pls_jax.weights_x, pls_np.weights_x, **PARITY)
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+def test_jax_pls_non_finite_scores_are_reported():
+    X = np.array([[1.0], [-1.0], [1.0], [-1.0]])
+    Y = np.array([[1.0], [1.0], [-1.0], [-1.0]])
+    with pytest.warns(UserWarning, match="Non-finite"):
+        NipalsPLS_JAX(n_components=1).fit(X, Y)
