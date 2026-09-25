@@ -276,7 +276,9 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             # in nipalsPCA)
             u_sign = np.nan_to_num(y_res[:, [start_col]])
             ui = _generic_start(y_res)
-            ti = ui.copy()
+            # No X score yet: comparing the first one with the Y guess
+            # could report convergence after a single iteration
+            ti = np.zeros_like(ui)
 
             iter_count = 0
             converged = False

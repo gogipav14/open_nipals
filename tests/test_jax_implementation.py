@@ -595,3 +595,14 @@ def test_jax_pls_start_is_not_trapped_by_an_orthogonal_y_column():
     pls_jax = NipalsPLS_JAX(n_components=1).fit(X, Y)
     assert np.all(np.isfinite(pls_jax.loadings_x))
     np.testing.assert_allclose(pls_jax.predict(X), pls_np.predict(X), **PARITY)
+
+
+@pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not installed")
+def test_jax_pls_no_false_convergence_on_the_first_iteration():
+    X = np.array([[1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [-1.0, -1.0]]) / 2
+    Y = X @ np.diag([2.0, 1.0])
+    Y /= np.linalg.norm(Y @ np.random.default_rng(0).standard_normal(2))
+    model = NipalsPLS_JAX(n_components=1).fit(X, Y)
+    np.testing.assert_allclose(
+        np.abs(model.weights_x[:, 0]), [1.0, 0.0], atol=1e-6
+    )

@@ -119,8 +119,10 @@ def _fit_components(
         u_sign = jax.lax.dynamic_slice_in_dim(y_res, start_col, 1, axis=1)
         ui = y_res @ start_weights[:, None]
         ui = jnp.where(jnp.any(ui != 0), ui, _start_column(y_res, start_col))
+        # No X score yet (zeros): comparing the first one with the Y
+        # guess could report convergence after a single iteration
         state = (
-            ui,
+            jnp.zeros_like(ui),
             jnp.zeros_like(ui),
             ui,
             jnp.zeros((x_res.shape[1], 1), x_res.dtype),
