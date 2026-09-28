@@ -403,12 +403,16 @@ def test_conditional_mean_keeps_input():
     )
 
 
-def test_zero_first_column():
+@pytest.mark.parametrize("with_nan", [False, True])
+def test_zero_first_column(with_nan):
     """A column of zeros must not poison the NIPALS starting guess"""
     rng = np.random.default_rng(0)
     data = rng.normal(size=(60, 5))
     data = data - data.mean(axis=0)
     data[:, 0] = 0
+    if with_nan:
+        # zeros plus a missing value: np.any would count NaN as nonzero
+        data[0, 0] = np.nan
 
     model = NipalsPCA(n_components=2).fit(data)
 
