@@ -325,6 +325,20 @@ def _run_set_component_test(test_data):
     assert max_imd_diff < 1e-9, f"Max IMD diff = {max_imd_diff}"
     assert max_oomd_diff < 1e-9, f"Max OOMD diff = {max_oomd_diff}"
 
+    # Shrink, then grow beyond the originally fitted components: the added
+    # components must be deflated with all fitted ones, not repeat them
+    model_direct = NipalsPCA(n_components=num_lvs + 2)
+    model_direct.fit(transformed_data)
+    model_regrown = NipalsPCA(n_components=num_lvs + 1)
+    model_regrown.fit(transformed_data)
+    model_regrown.set_components(1)
+    model_regrown.set_components(num_lvs + 2)
+
+    max_load_diff = np.max(
+        np.abs(model_direct.loadings - model_regrown.loadings)
+    )
+    assert max_load_diff < 1e-9, f"Regrown comps load diff = {max_load_diff}"
+
 
 @pytest.mark.parametrize(
     "get_data",
@@ -371,28 +385,11 @@ def test_explained_variance_ratio(get_data, request):
     assert np.all(diffs <= 0), "Explained variance ratio must be decreasing"
 
 
-def test_set_component_shrink_then_grow():
-    """Components added after shrinking must not repeat fitted ones"""
-    rng = np.random.default_rng(0)
-    data = rng.normal(size=(60, 5)) @ rng.normal(size=(5, 5))
-    data = data - data.mean(axis=0)
-
-    model_ref = NipalsPCA(n_components=5).fit(data)
-    model = NipalsPCA(n_components=4).fit(data)
-    model.set_components(2)
-    model.set_components(5)
-
-    assert np.allclose(model.loadings, model_ref.loadings, atol=1e-6), (
-        "Loadings after shrinking and growing differ from a direct fit"
-    )
-
-
-def test_conditional_mean_keeps_input():
+def test_conditional_mean_keeps_input(pca_input_nan):
     """Transforming must not fill in the NaNs of the caller's array"""
-    rng = np.random.default_rng(0)
-    data = rng.normal(size=(60, 5)) @ rng.normal(size=(5, 5))
-    data[rng.random(size=data.shape) < 0.1] = np.nan
-    data = data - np.nanmean(data, axis=0)
+    # a few columns keep the full model (one component per column) small
+    _, data = init_scaler(pca_input_nan[:, :6])
+    assert np.isnan(data).any()
     model = NipalsPCA(n_components=2).fit(data)
 
     data_before = data.copy()
@@ -404,17 +401,16 @@ def test_conditional_mean_keeps_input():
 
 
 @pytest.mark.parametrize("with_nan", [False, True])
-def test_zero_first_column(with_nan):
+def test_zero_first_column(pca_input, with_nan):
     """A column of zeros must not poison the NIPALS starting guess"""
-    rng = np.random.default_rng(0)
-    data = rng.normal(size=(60, 5))
-    data = data - data.mean(axis=0)
+    _, data = init_scaler(pca_input)
     data[:, 0] = 0
     if with_nan:
         # zeros plus a missing value: np.any would count NaN as nonzero
         data[0, 0] = np.nan
 
-    model = NipalsPCA(n_components=2).fit(data)
+    with pytest.warns(UserWarning, match="no observed nonzero values"):
+        model = NipalsPCA(n_components=2).fit(data)
 
     assert np.all(np.isfinite(model.loadings)), "Loadings contain NaN"
     assert np.all(np.isfinite(model.fit_scores)), "Scores contain NaN"

@@ -873,15 +873,17 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             raise NotFittedError("Model has not yet been fit")
 
         num_lvs = self.n_components
-        W = self.weights_x[:, :num_lvs]
-        P = self.loadings_x[:, :num_lvs]
-        Q = self.loadings_y[:, :num_lvs]
-        B_inner = self.regression_matrix[:num_lvs, :num_lvs]
+        weights = self.weights_x[:, :num_lvs]
+        loadings_x = self.loadings_x[:, :num_lvs]
+        loadings_y = self.loadings_y[:, :num_lvs]
+        inner_reg = self.regression_matrix[:num_lvs, :num_lvs]
 
         # Correction for the sequential deflation in transform()
-        deflation = np.eye(num_lvs) + np.triu(P.T @ W, 1)
+        deflation = np.eye(num_lvs) + np.triu(loadings_x.T @ weights, 1)
 
-        reg_vects = W @ np.linalg.inv(deflation) @ B_inner @ Q.T
+        reg_vects = (
+            weights @ np.linalg.inv(deflation) @ inner_reg @ loadings_y.T
+        )
 
         return reg_vects
 

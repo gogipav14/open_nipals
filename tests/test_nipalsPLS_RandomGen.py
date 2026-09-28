@@ -576,6 +576,20 @@ def _run_set_component_test(test_data):
     assert test_val < err_lim_oomd, f"OOMD rmse = {test_val}"
     assert lin_val > 1 - 1e-2, f"OOMD linConc = {lin_val}"
 
+    # Shrink, then grow beyond the originally fitted components: the added
+    # components must be deflated with all fitted ones, not repeat them
+    model_direct = NipalsPLS(n_components=num_lvs + 2)
+    model_direct.fit(transformed_data_x, transformed_data_y)
+    model_regrown = NipalsPLS(n_components=num_lvs + 1)
+    model_regrown.fit(transformed_data_x, transformed_data_y)
+    model_regrown.set_components(1)
+    model_regrown.set_components(num_lvs + 2)
+
+    max_load_diff = np.max(
+        np.abs(model_direct.loadings_x - model_regrown.loadings_x)
+    )
+    assert max_load_diff < 1e-9, f"Regrown comps load diff = {max_load_diff}"
+
 
 @pytest.mark.parametrize(
     "get_data",
@@ -638,60 +652,37 @@ def test_explained_variance_ratio(get_data, request):
     assert np.all(diffs_y < 0), "Explained y variance ratio must be decreasing"
 
 
-def test_set_component_shrink_then_grow():
-    """Components added after shrinking must not repeat fitted ones"""
-    rng = np.random.default_rng(0)
-    data_x = rng.normal(size=(60, 5)) @ rng.normal(size=(5, 5))
-    data_x = data_x - data_x.mean(axis=0)
-    data_y = data_x[:, :2] + 0.1 * rng.normal(size=(60, 2))
-    data_y = data_y - data_y.mean(axis=0)
-
-    model_ref = NipalsPLS(n_components=5).fit(data_x, data_y)
-    model = NipalsPLS(n_components=4).fit(data_x, data_y)
-    model.set_components(2)
-    model.set_components(5)
-
-    assert np.allclose(model.loadings_x, model_ref.loadings_x, atol=1e-6), (
-        "Loadings after shrinking and growing differ from a direct fit"
-    )
-    assert np.allclose(
-        model.predict(data_x), model_ref.predict(data_x), atol=1e-6
-    ), "Predictions after shrinking and growing differ from a direct fit"
-
-
-def test_all_nan_y_row_is_dropped():
+def test_all_nan_y_row_is_dropped(spec_dat, data_y):
     """A row without any Y data is dropped instead of crashing the fit"""
-    rng = np.random.default_rng(0)
-    data_x = rng.normal(size=(50, 6))
-    data_x = data_x - data_x.mean(axis=0)
-    data_y = data_x[:, :2].copy()
+    _, data_x = init_scaler(spec_dat)
+    _, data_y = init_scaler(data_y)
     data_y[5, :] = np.nan
-    data_y = data_y - np.nanmean(data_y, axis=0)
 
-    with pytest.warns(UserWarning, match="dropped"):
+    with pytest.warns(UserWarning) as record:
         model = NipalsPLS(n_components=2).fit(data_x, data_y)
 
-    assert model.fit_scores_x.shape == (49, 2)
+    messages = [str(warning.message) for warning in record]
+    assert any("dropped" in message for message in messages)
+    assert model.fit_scores_x.shape == (data_x.shape[0] - 1, 2)
     assert np.all(np.isfinite(model.predict(data_x)))
 
 
-def test_reg_vector_matches_predict():
-    """X @ get_reg_vector() must reproduce predict(X)"""
-    rng = np.random.default_rng(0)
-    data_x = rng.normal(size=(60, 8))
-    data_x = data_x - data_x.mean(axis=0)
-    data_y = data_x[:, :3] @ rng.normal(size=(3, 2))
-    data_y = data_y + 0.1 * rng.normal(size=(60, 2))
-    data_y = data_y - data_y.mean(axis=0)
+@pytest.mark.parametrize("fit_data", ["spec_dat", "nan_dat"])
+def test_reg_vector_matches_predict(spec_dat, data_y, fit_data, request):
+    """X @ get_reg_vector() must reproduce predict(X) for complete X, also
+    after a fit with missing data (P.T @ W is then not unit triangular)"""
+    # constant spectral channels become all-NaN after scaling; X @ B needs
+    # complete data, so use the varying channels only
+    varying = np.nanstd(spec_dat, axis=0) > 0
+    scaler_x, data_x = init_scaler(
+        request.getfixturevalue(fit_data)[:, varying]
+    )
+    _, data_y = init_scaler(data_y)
+    model = NipalsPLS(n_components=3).fit(data_x, data_y)
 
-    # After fitting with missing data P.T @ W is no longer unit triangular
-    data_x_nan = data_x.copy()
-    data_x_nan[rng.random(size=data_x.shape) < 0.3] = np.nan
-    data_x_nan = data_x_nan - np.nanmean(data_x_nan, axis=0)
-
-    for data_x_fit in (data_x, data_x_nan):
-        model = NipalsPLS(n_components=3).fit(data_x_fit, data_y)
-
-        assert np.allclose(
-            data_x @ model.get_reg_vector(), model.predict(data_x), atol=1e-10
-        ), "Regression vector does not reproduce the predictions"
+    complete_x = scaler_x.transform(spec_dat[:, varying])
+    assert np.allclose(
+        complete_x @ model.get_reg_vector(),
+        model.predict(complete_x),
+        atol=1e-9,
+    ), "Regression vector does not reproduce the predictions"

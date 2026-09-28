@@ -182,6 +182,10 @@ class NipalsPCA(BaseEstimator, TransformerMixin):
             start_col = 0
             if not np.nansum(data[:, 0] ** 2) > 0:
                 start_col = np.argmax(np.nansum(data**2, axis=0))
+                warnings.warn(
+                    f"The first column has no observed nonzero values on "
+                    f"LV {i}; starting from column {start_col} instead."
+                )
             t_new = data[:, [start_col]].copy()
 
             # Replace any nans w/ zero
