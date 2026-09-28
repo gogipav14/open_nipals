@@ -720,7 +720,8 @@ def test_all_missing_y_raises(spec_dat, data_y):
     data_y = np.full(data_y.shape, np.nan)
 
     model = NipalsPLS(n_components=2)
-    with pytest.warns(UserWarning) as record:
+    # also records NumPy's all-NaN RuntimeWarning from the centring check
+    with pytest.warns(Warning) as record:
         with pytest.raises(ValueError, match="every row of Y is missing"):
             model.fit(data_x, data_y)
 
