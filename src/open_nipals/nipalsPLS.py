@@ -193,6 +193,11 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
         self.fit_data_x, self.fit_data_y = self._filter_nan_rows(
             self.fit_data_x, self.fit_data_y
         )
+        if self.fit_data_x.shape[0] == 0:
+            raise ValueError(
+                "No rows left to fit: every row of Y is missing. "
+                "See force_include."
+            )
         X = self.fit_data_x.copy()
         y = self.fit_data_y.copy()
 

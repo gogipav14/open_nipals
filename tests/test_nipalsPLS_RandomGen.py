@@ -712,3 +712,17 @@ def test_regrown_model_with_missing_multi_target_y(spec_dat, data_y):
     )
     assert max_load_diff < 1e-9, f"Regrown load diff = {max_load_diff}"
     assert max_pred_diff < 1e-9, f"Regrown prediction diff = {max_pred_diff}"
+
+
+def test_all_missing_y_raises(spec_dat, data_y):
+    """Nothing left to fit when every Y row is missing"""
+    _, data_x = init_scaler(spec_dat)
+    data_y = np.full(data_y.shape, np.nan)
+
+    model = NipalsPLS(n_components=2)
+    with pytest.warns(UserWarning) as record:
+        with pytest.raises(ValueError, match="every row of Y is missing"):
+            model.fit(data_x, data_y)
+
+    assert any("dropped" in str(warning.message) for warning in record)
+    assert not model.__sklearn_is_fitted__()
