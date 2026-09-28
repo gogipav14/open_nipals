@@ -686,3 +686,29 @@ def test_reg_vector_matches_predict(spec_dat, data_y, fit_data, request):
         model.predict(complete_x),
         atol=1e-9,
     ), "Regression vector does not reproduce the predictions"
+
+
+def test_regrown_model_with_missing_multi_target_y(spec_dat, data_y):
+    """Growing deflates Y like fitting also when Y has missing values"""
+    varying = np.nanstd(spec_dat, axis=0) > 0
+    _, data_x = init_scaler(spec_dat[:, varying])
+    # second target from the spectra, some Y values missing
+    targets = np.column_stack([data_y[:, 0], spec_dat[:, varying][:, 10]])
+    targets[::7, 0] = np.nan
+    second_missing = np.zeros(len(targets), dtype=bool)
+    second_missing[3::11] = True
+    second_missing[::7] = False  # keep every row partly observed
+    targets[second_missing, 1] = np.nan
+    _, targets = init_scaler(targets)
+
+    direct = NipalsPLS(n_components=4).fit(data_x, targets)
+    regrown = NipalsPLS(n_components=3).fit(data_x, targets)
+    regrown.set_components(1)
+    regrown.set_components(4)
+
+    max_load_diff = np.max(np.abs(direct.loadings_x - regrown.loadings_x))
+    max_pred_diff = np.max(
+        np.abs(direct.predict(data_x) - regrown.predict(data_x))
+    )
+    assert max_load_diff < 1e-9, f"Regrown load diff = {max_load_diff}"
+    assert max_pred_diff < 1e-9, f"Regrown prediction diff = {max_pred_diff}"

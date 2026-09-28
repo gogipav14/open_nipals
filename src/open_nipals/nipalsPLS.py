@@ -222,11 +222,13 @@ class NipalsPLS(BaseEstimator, TransformerMixin, RegressorMixin):
             # Range of LVs to add
             num_lvs = range(fitted_components, fitted_components + n_add)
 
-            # There are loadings, so must deflate
-            sim_data_x = self.inverse_transform(self.transform(X))
-            sim_data_y = self.predict(X, self.fit_scores_x)
-            X = X - sim_data_x
-            y = y - sim_data_y
+            # There are loadings, so must deflate exactly as the fit loop
+            # below does (t p' for X, t q' for Y), so that a grown model
+            # equals a direct fit. predict() would use t b q', and b is
+            # not 1 when Y has missing values.
+            t_fit = self.fit_scores_x[:, :fitted_components]
+            X = X - t_fit @ self.loadings_x[:, :fitted_components].T
+            y = y - t_fit @ self.loadings_y[:, :fitted_components].T
 
             p = np.concatenate(
                 [self.loadings_x, np.zeros((n_cols_x, n_add))], axis=1
