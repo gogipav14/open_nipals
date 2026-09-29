@@ -462,7 +462,13 @@ def test_oomd(get_data, request):
 
 
 def _run_set_component_test(test_data):
-    """Helper function to run set_component tests"""
+    """Helper function to run set_component tests
+
+    A model fitted directly with num_lvs + 2 components and one fitted with
+    num_lvs + 1, shrunk to 1 and grown to num_lvs + 2 must agree with each
+    other, and with the external ground truth for the first num_lvs
+    components.
+    """
     model = test_data["model"][0]
     scaler_x = test_data["model"][1]
     scaler_y = test_data["model"][2]
@@ -476,13 +482,51 @@ def _run_set_component_test(test_data):
 
     transformed_data_x = scaler_x.transform(X)
     transformed_data_y = scaler_y.transform(Y)
-
-    model_low = NipalsPLS(n_components=1)
-    model_low.fit(transformed_data_x, transformed_data_y)
-
-    # Update to new amount of components
     num_lvs = model.n_components
-    model_low.set_components(num_lvs)
+
+    model_direct = NipalsPLS(n_components=num_lvs + 2)
+    model_direct.fit(transformed_data_x, transformed_data_y)
+
+    model_regrown = NipalsPLS(n_components=num_lvs + 1)
+    model_regrown.fit(transformed_data_x, transformed_data_y)
+    model_regrown.set_components(1)
+    model_regrown.set_components(num_lvs + 2)
+
+    # The two models agree on every component
+    for attribute in (
+        "fit_scores_x",
+        "loadings_x",
+        "weights_x",
+        "loadings_y",
+        "regression_matrix",
+    ):
+        max_diff = np.max(
+            np.abs(
+                getattr(model_direct, attribute)
+                - getattr(model_regrown, attribute)
+            )
+        )
+        assert max_diff < 1e-9, f"Regrown {attribute} diff = {max_diff}"
+
+    for label, direct_val, regrown_val in (
+        (
+            "predictions",
+            model_direct.predict(transformed_data_x),
+            model_regrown.predict(transformed_data_x),
+        ),
+        (
+            "IMD",
+            model_direct.calc_imd(input_array=transformed_data_x),
+            model_regrown.calc_imd(input_array=transformed_data_x),
+        ),
+        (
+            "OOMD",
+            model_direct.calc_oomd(transformed_data_x),
+            model_regrown.calc_oomd(transformed_data_x),
+        ),
+    ):
+        max_diff = np.nanmax(np.abs(direct_val - regrown_val))
+        assert max_diff < 1e-9, f"Regrown {label} diff = {max_diff}"
 
     # tolerances per dataset
     if name == "Yes NaN, PLST RandomGen":
@@ -504,91 +548,51 @@ def _run_set_component_test(test_data):
         err_lim_imd = 5e-6
         err_lim_oomd = 5e-3
 
-    # compare X scores
-    test_val = rmse(model.fit_scores_x, model_low.fit_scores_x)
-    lin_val = nan_conc_coeff(model.fit_scores_x, model_low.fit_scores_x)
-
-    # overall rmse is low, correlation is very high
-    assert test_val < err_lim_scores, f"Inc comps scores rmse = {test_val}"
-    assert lin_val > 1 - 1e-5, f"Inc comps scores linConc = {lin_val}"
-
-    # compare X loadings
-    test_val = rmse(model.loadings_x, model_low.loadings_x)
-    lin_val = nan_conc_coeff(model.loadings_x, model_low.loadings_x)
-
-    assert test_val < err_lim_loadings, f"Inc comps load rmse = {test_val}"
-    assert lin_val > 1 - 1e-5, f"Inc comps load linConc = {lin_val}"
-
-    # compare Y predictions
+    # Back at num_lvs components both agree with the ground truth
     py_y_vals = model.predict(scores_x=model.fit_scores_x)
-    py_y_vals_low = model_low.predict(scores_x=model_low.fit_scores_x)
-    test_val = rmse(py_y_vals, py_y_vals_low)
-    lin_val = nan_conc_coeff(py_y_vals, py_y_vals_low)
+    imd_metric, known_imd = imd
+    oomd_metric, known_oomd = oomd
 
-    assert test_val < err_lim_predict, f"Inc comps preds rmse = {test_val}"
-    assert lin_val > 1 - 1e-5, f"Inc comps preds linConc = {lin_val}"
+    for label, test_model in (
+        ("direct", model_direct),
+        ("regrown", model_regrown),
+    ):
+        test_model.set_components(num_lvs)
+        scores = test_model.fit_scores_x[:, :num_lvs]
 
-    # Add an extra component, drop back down
-    model_low.set_components(num_lvs + 1)
-    model_low.set_components(num_lvs)
+        # compare X scores
+        test_val = rmse(T, scores)
+        lin_val = nan_conc_coeff(T, scores)
+        assert test_val < err_lim_scores, f"{label} scores rmse = {test_val}"
+        assert lin_val > 1 - 1e-5, f"{label} scores linConc = {lin_val}"
 
-    # compare X scores
-    test_val = rmse(T, model_low.fit_scores_x[:, :num_lvs])
-    lin_val = nan_conc_coeff(T, model_low.fit_scores_x[:, :num_lvs])
+        # compare X loadings
+        test_val = rmse(P, test_model.loadings_x[:, :num_lvs])
+        lin_val = nan_conc_coeff(P, test_model.loadings_x[:, :num_lvs])
+        assert test_val < err_lim_loadings, f"{label} load rmse = {test_val}"
+        assert lin_val > 1 - 1e-5, f"{label} load linConc = {lin_val}"
 
-    assert test_val < err_lim_scores, f"Dec comps scores rmse = {test_val}"
-    assert lin_val > 1 - 1e-5, f"Dec comps scores linConc = {lin_val}"
+        # compare Y predictions
+        test_y_vals = test_model.predict(scores_x=scores)
+        test_val = rmse(py_y_vals, test_y_vals)
+        lin_val = nan_conc_coeff(py_y_vals, test_y_vals)
+        assert test_val < err_lim_predict, f"{label} preds rmse = {test_val}"
+        assert lin_val > 1 - 1e-5, f"{label} preds linConc = {lin_val}"
 
-    # compare X loadings
-    test_val = rmse(P, model_low.loadings_x[:, :num_lvs])
-    lin_val = nan_conc_coeff(P, model_low.loadings_x[:, :num_lvs])
+        # compare distances
+        test_imd = test_model.calc_imd(input_scores=scores, metric=imd_metric)
+        test_val = rmse(test_imd, known_imd)
+        lin_val = nan_conc_coeff(test_imd, known_imd)
+        assert test_val < err_lim_imd, f"{label} IMD rmse = {test_val}"
+        assert lin_val > 1 - 1e-5, f"{label} IMD linConc = {lin_val}"
 
-    assert test_val < err_lim_loadings, f"Dec comps load rmse = {test_val}"
-    assert lin_val > 1 - 1e-5, f"Dec comps load linConc = {lin_val}"
-
-    # compare Y predictions
-    py_y_vals = model.predict(scores_x=model.fit_scores_x)
-    py_y_vals_low = model_low.predict(
-        scores_x=model_low.fit_scores_x[:, :num_lvs]
-    )
-    test_val = rmse(py_y_vals, py_y_vals_low)
-    lin_val = nan_conc_coeff(py_y_vals, py_y_vals_low)
-
-    assert test_val < err_lim_predict, f"Dec comps preds rmse = {test_val}"
-    assert lin_val > 1 - 1e-5, f"Dec comps preds linConc = {lin_val}"
-
-    # Now show that calc_imd/calc_oomd function the same
-    metric, known_imd = imd
-    test_imd = model_low.calc_imd(
-        input_scores=model_low.fit_scores_x[:, :num_lvs], metric=metric
-    )
-    test_val = rmse(test_imd, known_imd)
-    lin_val = nan_conc_coeff(test_imd, known_imd)
-
-    assert test_val < err_lim_imd, f"IMD rmse = {test_val}"
-    assert lin_val > 1 - 1e-5, f"IMD linConc = {lin_val}"
-
-    metric, known_oomd = oomd
-    test_oomd = model_low.calc_oomd(transformed_data_x, metric=metric)
-    test_val = rmse(known_oomd, test_oomd)
-    lin_val = nan_conc_coeff(test_oomd, known_oomd)
-
-    assert test_val < err_lim_oomd, f"OOMD rmse = {test_val}"
-    assert lin_val > 1 - 1e-2, f"OOMD linConc = {lin_val}"
-
-    # Shrink, then grow beyond the originally fitted components: the added
-    # components must be deflated with all fitted ones, not repeat them
-    model_direct = NipalsPLS(n_components=num_lvs + 2)
-    model_direct.fit(transformed_data_x, transformed_data_y)
-    model_regrown = NipalsPLS(n_components=num_lvs + 1)
-    model_regrown.fit(transformed_data_x, transformed_data_y)
-    model_regrown.set_components(1)
-    model_regrown.set_components(num_lvs + 2)
-
-    max_load_diff = np.max(
-        np.abs(model_direct.loadings_x - model_regrown.loadings_x)
-    )
-    assert max_load_diff < 1e-9, f"Regrown comps load diff = {max_load_diff}"
+        test_oomd = test_model.calc_oomd(
+            transformed_data_x, metric=oomd_metric
+        )
+        test_val = rmse(known_oomd, test_oomd)
+        lin_val = nan_conc_coeff(test_oomd, known_oomd)
+        assert test_val < err_lim_oomd, f"{label} OOMD rmse = {test_val}"
+        assert lin_val > 1 - 1e-2, f"{label} OOMD linConc = {lin_val}"
 
 
 @pytest.mark.parametrize(
