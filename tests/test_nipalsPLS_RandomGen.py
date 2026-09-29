@@ -525,8 +525,14 @@ def _run_set_component_test(test_data):
             model_regrown.calc_oomd(transformed_data_x),
         ),
     ):
-        max_diff = np.nanmax(np.abs(direct_val - regrown_val))
-        assert max_diff < 1e-9, f"Regrown {label} diff = {max_diff}"
+        assert np.all(np.isfinite(direct_val)), f"Direct {label} not finite"
+        np.testing.assert_allclose(
+            regrown_val,
+            direct_val,
+            rtol=0,
+            atol=1e-9,
+            err_msg=f"Regrown {label}",
+        )
 
     # tolerances per dataset
     if name == "Yes NaN, PLST RandomGen":
