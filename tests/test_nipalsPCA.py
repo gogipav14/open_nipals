@@ -299,14 +299,16 @@ def _run_set_component_test(test_data):
     model_regrown.set_components(1)
     model_regrown.set_components(num_lvs + 2)
 
-    # The two models agree on every component
-    max_score_diff = np.max(
-        np.abs(model_direct.fit_scores - model_regrown.fit_scores)
-    )
+    # The two models agree on every component; scores to the accuracy of
+    # test_score_method_equivalence
+    test_val = rmse(model_direct.fit_scores, model_regrown.fit_scores)
+    lin_val = nan_conc_coeff(model_direct.fit_scores, model_regrown.fit_scores)
+    assert test_val < 1e-9, f"Regrown scores rmse = {test_val}"
+    assert lin_val > 1 - 1e-6, f"Regrown scores linConc = {lin_val}"
+
     max_load_diff = np.max(
         np.abs(model_direct.loadings - model_regrown.loadings)
     )
-    assert max_score_diff < 1e-9, f"Regrown score diff = {max_score_diff}"
     assert max_load_diff < 1e-9, f"Regrown load diff = {max_load_diff}"
 
     max_imd_diff = np.max(
@@ -325,8 +327,8 @@ def _run_set_component_test(test_data):
     assert max_oomd_diff < 1e-9, f"Regrown OOMD diff = {max_oomd_diff}"
 
     # Back at num_lvs components both agree with the ground truth
-    T = test_data["T"]
-    P = test_data["P"]
+    true_scores = test_data["T"]
+    true_loadings = test_data["P"]
     imd_metric, known_imd = test_data["imd"]
     oomd_metric, known_oomd = test_data["oomd"]
 
@@ -337,13 +339,15 @@ def _run_set_component_test(test_data):
         test_model.set_components(num_lvs)
         scores = test_model.fit_scores[:, :num_lvs]
 
-        test_val = rmse(T, scores)
-        lin_val = nan_conc_coeff(T, scores)
+        test_val = rmse(true_scores, scores)
+        lin_val = nan_conc_coeff(true_scores, scores)
         assert test_val < 1e-2, f"{label} scores rmse = {test_val}"
         assert lin_val > 1 - 1e-5, f"{label} scores linConc = {lin_val}"
 
-        test_val = rmse(P, test_model.loadings[:, :num_lvs])
-        lin_val = nan_conc_coeff(P, test_model.loadings[:, :num_lvs])
+        test_val = rmse(true_loadings, test_model.loadings[:, :num_lvs])
+        lin_val = nan_conc_coeff(
+            true_loadings, test_model.loadings[:, :num_lvs]
+        )
         assert test_val < 1e-3, f"{label} loadings rmse = {test_val}"
         assert lin_val > 1 - 1e-5, f"{label} loadings linConc = {lin_val}"
 
